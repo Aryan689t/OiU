@@ -10,6 +10,9 @@ import {
   TranscriptSegment,
   MeetingEvent,
   EventDetector,
+  DialogueAnalysis,
+  getDialogueAnalysis,
+  ParsedSentence,
 } from "@oiu/shared";
 import {
   extractCoreCalloutOrQuestion,
@@ -94,6 +97,7 @@ export const SidepanelApp: React.FC = () => {
   const [nameInput, setNameInput] = useState("");
   const [aliasesInput, setAliasesInput] = useState("");
   const [identifiersInput, setIdentifiersInput] = useState("");
+  const [keywordsInput, setKeywordsInput] = useState("");
   const [profileError, setProfileError] = useState<string | null>(null);
   const [profileSavedMsg, setProfileSavedMsg] = useState(false);
   const [isCheckingTab, setIsCheckingTab] = useState(false);
@@ -109,6 +113,7 @@ export const SidepanelApp: React.FC = () => {
   const [showWhatYouMissed, setShowWhatYouMissed] = useState(false);
   const [lastSpeechTime, setLastSpeechTime] = useState<number>(0);
   const [isVoiceActive, setIsVoiceActive] = useState<boolean>(false);
+  const [liveDialogue, setLiveDialogue] = useState<DialogueAnalysis | null>(null);
 
   // Gemini AI Key & Smart Responses State
   const [geminiApiKey, setGeminiApiKey] = useState("");
@@ -125,6 +130,15 @@ export const SidepanelApp: React.FC = () => {
 
   const transcriptsRef = useRef(transcripts);
   transcriptsRef.current = transcripts;
+
+  const transcriptContainerRef = useRef<HTMLDivElement | null>(null);
+
+  // Auto-scroll transcript container to bottom when speech arrives
+  useEffect(() => {
+    if (transcriptContainerRef.current) {
+      transcriptContainerRef.current.scrollTop = transcriptContainerRef.current.scrollHeight;
+    }
+  }, [transcripts]);
 
   useEffect(() => {
     const interval = setInterval(() => {
@@ -270,6 +284,7 @@ export const SidepanelApp: React.FC = () => {
         setNameInput(saved.displayName || "");
         setAliasesInput(formatCommaSeparatedList(saved.aliases));
         setIdentifiersInput(formatCommaSeparatedList(saved.identifiers));
+        setKeywordsInput(formatCommaSeparatedList(saved.keywords || []));
       } else {
         setIsEditingProfile(true);
       }
@@ -307,6 +322,10 @@ export const SidepanelApp: React.FC = () => {
       } else if (msg.type === "TRANSCRIPT_SEGMENT" && msg.segment) {
         const result = detectorRef.current.processSegment(msg.segment);
 
+        if (result.dialogueAnalysis) {
+          setLiveDialogue(result.dialogueAnalysis);
+        }
+
         if (result.turnAction === "NO_OP") {
           return;
         }
@@ -315,13 +334,36 @@ export const SidepanelApp: React.FC = () => {
         setLastSpeechTime(now);
         setIsVoiceActive(true);
 
-        // Update transcripts with Turn-based streaming vs new turn
+        // Update transcripts with Turn-based streaming, deduplication, and distinct turns
         setTranscripts((prev) => {
-          if (prev.length > 0 && result.isContinuation) {
+          const incomingText = (result.accumulatedText || msg.segment.text || "").trim();
+          if (!incomingText) return prev;
+
+          if (prev.length > 0) {
             const copy = [...prev];
             const last = { ...copy[copy.length - 1] };
-            if (last.id === result.turnId || Math.abs(now - last.endMs) < 3000) {
-              last.text = result.accumulatedText;
+            const cleanNew = incomingText.toLowerCase().replace(/[^a-z0-9]/g, "");
+            const cleanLast = last.text.toLowerCase().replace(/[^a-z0-9]/g, "");
+
+            // 1. Exact or near duplicate check (drop or update in place within 3.5s)
+            if (
+              cleanNew === cleanLast ||
+              (cleanLast.length > 0 &&
+                Math.abs(now - last.endMs) < 3500 &&
+                (cleanNew.startsWith(cleanLast) || cleanLast.startsWith(cleanNew)))
+            ) {
+              last.text = incomingText.length >= last.text.length ? incomingText : last.text;
+              last.endMs = now;
+              if (last.speakerId === "Speaker" || last.speakerId === "Live Voice") {
+                last.speakerId = result.speakerId || last.speakerId;
+              }
+              copy[copy.length - 1] = last;
+              return copy;
+            }
+
+            // 2. Normal turn continuation
+            if (result.isContinuation && (last.id === result.turnId || Math.abs(now - last.endMs) < 3000)) {
+              last.text = incomingText;
               last.endMs = now;
               last.isFinal = false;
               copy[copy.length - 1] = last;
@@ -329,12 +371,12 @@ export const SidepanelApp: React.FC = () => {
             }
           }
 
-          // New Turn
+          // 3. Genuine New Turn
           const copy = prev.map((t) => ({ ...t, isFinal: true }));
           const newSeg: TranscriptSegment = {
             id: result.turnId,
             sessionId: msg.segment.sessionId || "meet_call",
-            text: result.accumulatedText || msg.segment.text,
+            text: incomingText,
             speakerId: result.speakerId || msg.segment.speakerId || "Speaker",
             startMs: now,
             endMs: now,
@@ -366,6 +408,7 @@ export const SidepanelApp: React.FC = () => {
       displayName: nameInput.trim(),
       aliases: parseCommaSeparatedList(aliasesInput),
       identifiers: parseCommaSeparatedList(identifiersInput),
+      keywords: parseCommaSeparatedList(keywordsInput),
     };
 
     const validation = validateProfile(newProfile);
@@ -498,6 +541,18 @@ export const SidepanelApp: React.FC = () => {
     triggerAlert(testEvent);
   };
 
+  const handleTurnOnCaptions = () => {
+    if (session.tabId && session.tabId > 0) {
+      chrome.tabs.sendMessage(session.tabId, { type: "TOGGLE_MEET_CAPTIONS" }).catch(() => {});
+    } else {
+      chrome.tabs.query({ url: "*://meet.google.com/*" }, (tabs) => {
+        if (tabs && tabs[0]?.id) {
+          chrome.tabs.sendMessage(tabs[0].id, { type: "TOGGLE_MEET_CAPTIONS" }).catch(() => {});
+        }
+      });
+    }
+  };
+
   const isListening = session.state === "LISTENING";
   const isMeetReady = session.state === "SUPPORTED_TAB_READY";
 
@@ -618,30 +673,104 @@ export const SidepanelApp: React.FC = () => {
       {/* ACTIVE ALERT CARD (Top Priority Alert Banner) */}
       {activeAlert && (() => {
         const displayAlert = (alertsHistory.length > 0 && alertsHistory[currentAlertIndex]) ? alertsHistory[currentAlertIndex] : activeAlert;
-        const { coreText, isQuestion, topic } = extractCoreCalloutOrQuestion(displayAlert.transcriptExcerpt, profile);
+        const {
+          coreText,
+          isQuestion,
+          topic,
+          activeFollowUp,
+          relationToPrevious,
+          relationReason,
+          addressedToOther,
+          otherTarget,
+        } = extractCoreCalloutOrQuestion(displayAlert.transcriptExcerpt, profile);
         const suggestions = aiResponsesMap[displayAlert.id] || getSuggestionsForEvent(displayAlert, profile);
 
         return (
           <div
             style={{
-              backgroundColor: "#fef2f2",
-              border: "2px solid #dc2626",
+              backgroundColor: currentAlertIndex === 0 ? "#fef2f2" : "#fffbeb",
+              border: currentAlertIndex === 0 ? "3px solid #dc2626" : "2px solid #d97706",
               borderRadius: 8,
               padding: 14,
               marginBottom: 16,
-              boxShadow: "0 6px 16px rgba(220, 38, 38, 0.3)",
+              boxShadow: currentAlertIndex === 0 ? "0 8px 24px rgba(220, 38, 38, 0.25)" : "0 4px 14px rgba(217, 119, 6, 0.2)",
+              transition: "all 0.25s ease",
             }}
           >
+            {/* Banner if reviewing a past alert */}
+            {currentAlertIndex > 0 && (
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  marginBottom: 10,
+                  padding: "6px 10px",
+                  backgroundColor: "#fef3c7",
+                  border: "1px solid #fde68a",
+                  borderRadius: 6,
+                }}
+              >
+                <span style={{ fontSize: 11, fontWeight: 700, color: "#92400e" }}>
+                  ⏮ Viewing Past Alert #{currentAlertIndex + 1} ({alertsHistory.length - currentAlertIndex} of {alertsHistory.length})
+                </span>
+                <button
+                  onClick={() => setCurrentAlertIndex(0)}
+                  style={{
+                    backgroundColor: "#dc2626",
+                    color: "#ffffff",
+                    border: "none",
+                    borderRadius: 4,
+                    padding: "3px 8px",
+                    fontSize: 11,
+                    fontWeight: 700,
+                    cursor: "pointer",
+                  }}
+                >
+                  Return to Live Alert ➔
+                </button>
+              </div>
+            )}
+
             {/* Alert Header */}
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 8 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <span style={{ fontSize: 20 }}>🚨</span>
-                <strong style={{ fontSize: 15, color: "#991b1b" }}>
-                  {displayAlert.type === "NAME_MENTION" && "You were called!"}
-                  {displayAlert.type === "IDENTIFIER_MENTION" && "Your ID was called!"}
-                  {displayAlert.type === "ATTENDANCE_CALL" && "Roll Call / Attendance check!"}
-                  {displayAlert.type === "DIRECT_QUESTION" && "Question for you!"}
-                </strong>
+                <span style={{ fontSize: 22 }}>{currentAlertIndex === 0 ? "🚨" : "⏮"}</span>
+                <div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                    <strong style={{ fontSize: 15, color: currentAlertIndex === 0 ? "#991b1b" : "#92400e" }}>
+                      {displayAlert.type === "NAME_MENTION" && "You were called!"}
+                      {displayAlert.type === "IDENTIFIER_MENTION" && "Your ID was called!"}
+                      {displayAlert.type === "KEYWORD_MENTION" && "Monitored Keyword Mentioned!"}
+                      {displayAlert.type === "ATTENDANCE_CALL" && "Roll Call / Attendance check!"}
+                      {displayAlert.type === "DIRECT_QUESTION" && "Question for you!"}
+                    </strong>
+                    {currentAlertIndex === 0 ? (
+                      <span
+                        style={{
+                          fontSize: 10,
+                          fontWeight: 800,
+                          backgroundColor: "#dc2626",
+                          color: "#ffffff",
+                          padding: "2px 7px",
+                          borderRadius: 4,
+                          letterSpacing: "0.5px",
+                          boxShadow: "0 0 6px rgba(220, 38, 38, 0.6)",
+                        }}
+                      >
+                        ● LIVE NOW
+                      </span>
+                    ) : (
+                      <span style={{ fontSize: 10, fontWeight: 700, backgroundColor: "#fef3c7", color: "#b45309", padding: "1px 6px", borderRadius: 4 }}>
+                        PAST #{currentAlertIndex + 1}
+                      </span>
+                    )}
+                  </div>
+                  <div style={{ fontSize: 11, color: currentAlertIndex === 0 ? "#7f1d1d" : "#78350f", marginTop: 2 }}>
+                    Triggered at {new Date(displayAlert.timestampMs).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
+                    {currentAlertIndex === 0 ? " (Current Live Turn)" : ` (${Math.max(1, Math.round((Date.now() - displayAlert.timestampMs) / 60000))}m ago)`}
+                  </div>
+                </div>
               </div>
               <button
                 onClick={() => {
@@ -672,9 +801,9 @@ export const SidepanelApp: React.FC = () => {
                   justifyContent: "space-between",
                   marginBottom: 8,
                   padding: "4px 8px",
-                  backgroundColor: "#fee2e2",
+                  backgroundColor: currentAlertIndex === 0 ? "#fee2e2" : "#fef3c7",
                   borderRadius: 6,
-                  border: "1px solid #fca5a5",
+                  border: currentAlertIndex === 0 ? "1px solid #fca5a5" : "1px solid #fde68a",
                 }}
               >
                 <button
@@ -693,9 +822,28 @@ export const SidepanelApp: React.FC = () => {
                 >
                   ◀ Previous Alert
                 </button>
-                <span style={{ fontSize: 11, fontWeight: 700, color: "#991b1b" }}>
-                  {currentAlertIndex === 0 ? "Latest Alert" : `Alert ${currentAlertIndex + 1} of ${alertsHistory.length}`}
-                </span>
+                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  <span style={{ fontSize: 11, fontWeight: 700, color: currentAlertIndex === 0 ? "#991b1b" : "#92400e" }}>
+                    {currentAlertIndex === 0 ? "Latest Alert" : `Alert ${currentAlertIndex + 1} of ${alertsHistory.length}`}
+                  </span>
+                  {currentAlertIndex > 0 && (
+                    <button
+                      onClick={() => setCurrentAlertIndex(0)}
+                      style={{
+                        padding: "1px 6px",
+                        fontSize: 10,
+                        fontWeight: 600,
+                        backgroundColor: "#dc2626",
+                        color: "#ffffff",
+                        border: "none",
+                        borderRadius: 3,
+                        cursor: "pointer",
+                      }}
+                    >
+                      Go to Current ↗
+                    </button>
+                  )}
+                </div>
                 <button
                   disabled={currentAlertIndex <= 0}
                   onClick={() => setCurrentAlertIndex((i) => Math.max(0, i - 1))}
@@ -750,6 +898,49 @@ export const SidepanelApp: React.FC = () => {
               <div style={{ fontSize: 14, fontWeight: 700, color: "#111827", lineHeight: 1.35 }}>
                 "{coreText || displayAlert.transcriptExcerpt}"
               </div>
+
+              {/* Connected Follow-up Sentence (e.g. "tatha 117 aur ine Aryan 17") */}
+              {activeFollowUp && (
+                <div
+                  style={{
+                    marginTop: 8,
+                    padding: "6px 8px",
+                    backgroundColor: "#eff6ff",
+                    borderRadius: 4,
+                    border: "1px solid #bfdbfe",
+                    fontSize: 11,
+                    color: "#1e40af",
+                  }}
+                >
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 2 }}>
+                    <span style={{ fontWeight: 700, fontSize: 10, textTransform: "uppercase" }}>🔗 Connected Follow-up:</span>
+                    <span style={{ fontSize: 9, fontWeight: 700, backgroundColor: "#dbeafe", color: "#1d4ed8", padding: "1px 5px", borderRadius: 3 }}>
+                      {relationReason || "Connected"}
+                    </span>
+                  </div>
+                  <div style={{ fontStyle: "italic", fontWeight: 600 }}>"{activeFollowUp}"</div>
+                </div>
+              )}
+
+              {/* Addressed to other participant warning (e.g. "Swagat roll 118 you answer") */}
+              {addressedToOther && (
+                <div
+                  style={{
+                    marginTop: 8,
+                    padding: "6px 8px",
+                    backgroundColor: "#fef3c7",
+                    borderRadius: 4,
+                    border: "1px solid #fde68a",
+                    fontSize: 11,
+                    color: "#92400e",
+                  }}
+                >
+                  <div style={{ fontWeight: 700, fontSize: 10, textTransform: "uppercase", marginBottom: 2 }}>
+                    ⚠️ Speaker Shifted to Another Participant
+                  </div>
+                  <div>Addressed to {otherTarget || "another student"}. This question may no longer be for you.</div>
+                </div>
+              )}
 
               {showRawExcerpt && displayAlert.transcriptExcerpt !== coreText && (
                 <div style={{ marginTop: 6, paddingTop: 6, borderTop: "1px dashed #fecaca", fontSize: 10, color: "#6b7280", fontStyle: "italic", maxHeight: 50, overflowY: "auto" }}>
@@ -960,6 +1151,141 @@ export const SidepanelApp: React.FC = () => {
               Monitoring for: <strong>{profile.displayName || "Name"}</strong>
               {profile.identifiers.length > 0 && ` (${profile.identifiers.join(", ")})`}
             </p>
+
+            {/* Real-time Current Spoken Dialogue & Sentence Flow */}
+            <div
+              style={{
+                marginBottom: 12,
+                padding: "10px 12px",
+                backgroundColor: "#f8fafc",
+                borderRadius: 6,
+                border: "1px solid #cbd5e1",
+              }}
+            >
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  <span style={{ fontSize: 13 }}>💬</span>
+                  <span style={{ fontSize: 12, fontWeight: 700, color: "#1e293b" }}>
+                    Current Dialogue
+                  </span>
+                </div>
+                {liveDialogue?.activeSentence ? (
+                  <span
+                    style={{
+                      fontSize: 9,
+                      fontWeight: 700,
+                      backgroundColor: liveDialogue.activeSentence.relation === "connected" ? "#dbeafe" : "#f1f5f9",
+                      color: liveDialogue.activeSentence.relation === "connected" ? "#1e40af" : "#475569",
+                      padding: "2px 6px",
+                      borderRadius: 4,
+                      border: "1px solid #cbd5e1",
+                    }}
+                  >
+                    {liveDialogue.activeSentence.relation === "connected" ? "🔗 CONNECTED" : "● LIVE ACTIVE"}
+                  </span>
+                ) : (
+                  <span style={{ fontSize: 10, color: "#64748b" }}>Live Call Stream</span>
+                )}
+              </div>
+
+              {liveDialogue && liveDialogue.sentences.length > 0 ? (
+                <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                  {/* Previous Sentences in this dialogue sequence */}
+                  {liveDialogue.previousSentences.map((s, idx) => (
+                    <div
+                      key={s.id || idx}
+                      style={{
+                        fontSize: 11,
+                        color: "#475569",
+                        padding: "5px 8px",
+                        borderLeft: "3px solid #94a3b8",
+                        backgroundColor: "#f1f5f9",
+                        borderRadius: "0 4px 4px 0",
+                      }}
+                    >
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 9, color: "#64748b", marginBottom: 2 }}>
+                        <span style={{ fontWeight: 700, color: "#475569" }}>
+                          [✓ OLD / COMPLETED]
+                        </span>
+                        <span>{s.isQuestion ? "❓ Question asked" : "Speech turn"}</span>
+                      </div>
+                      <div style={{ color: "#334155" }}>"{s.text}"</div>
+                    </div>
+                  ))}
+
+                  {/* Active / Current Live Sentence */}
+                  <div
+                    style={{
+                      fontSize: 12,
+                      color: "#0f172a",
+                      padding: "7px 10px",
+                      borderLeft: liveDialogue.activeSentence.relation === "connected" ? "3px solid #2563eb" : "3px solid #16a34a",
+                      backgroundColor: liveDialogue.activeSentence.relation === "connected" ? "#eff6ff" : "#f0fdf4",
+                      borderRadius: "0 4px 4px 0",
+                      boxShadow: "0 1px 3px rgba(0,0,0,0.05)",
+                    }}
+                  >
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 9, marginBottom: 3 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                        <span
+                          style={{
+                            fontWeight: 800,
+                            color: "#ffffff",
+                            backgroundColor: liveDialogue.activeSentence.relation === "connected" ? "#2563eb" : "#16a34a",
+                            padding: "1px 5px",
+                            borderRadius: 3,
+                          }}
+                        >
+                          ● CURRENT
+                        </span>
+                        <span style={{ fontWeight: 600, color: "#334155" }}>
+                          {liveDialogue.activeSentence.speakerId || "Speaker"}
+                        </span>
+                      </div>
+                      <span
+                        style={{
+                          fontWeight: 700,
+                          fontSize: 9,
+                          color: liveDialogue.activeSentence.relation === "connected" ? "#1d4ed8" : "#059669",
+                        }}
+                      >
+                        {liveDialogue.activeSentence.relationReason}
+                      </span>
+                    </div>
+                    <div style={{ fontWeight: 600, lineHeight: 1.35 }}>
+                      "{liveDialogue.activeSentence.text}"
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div style={{ fontSize: 11, color: "#64748b", padding: "4px 0", lineHeight: 1.4 }}>
+                  <div>Listening for dialogue... Captions will show here with Old vs New and Connected vs Disconnected differentiation.</div>
+                  <div style={{ marginTop: 8, padding: "8px 10px", backgroundColor: "#f0f9ff", border: "1px solid #bae6fd", borderRadius: 6, color: "#0369a1" }}>
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6 }}>
+                      <span style={{ fontWeight: 700, fontSize: 11 }}>💡 Google Meet Captions</span>
+                      <button
+                        onClick={handleTurnOnCaptions}
+                        style={{
+                          padding: "3px 8px",
+                          fontSize: 10,
+                          fontWeight: 700,
+                          backgroundColor: "#0284c7",
+                          color: "#ffffff",
+                          border: "none",
+                          borderRadius: 4,
+                          cursor: "pointer",
+                        }}
+                      >
+                        Turn On Meet Captions
+                      </button>
+                    </div>
+                    <div style={{ fontSize: 10, marginTop: 4, color: "#0c4a6e" }}>
+                      Meet captions must be ON so OiU can read the speech. You can also press <strong>C</strong> in Meet.
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
 
             {/* Live Audio & Speech Activity Meter */}
             <div
@@ -1197,48 +1523,81 @@ export const SidepanelApp: React.FC = () => {
 
         {isTranscriptOpen && (
           <div
+            ref={transcriptContainerRef}
             style={{
               marginTop: 10,
-              maxHeight: 180,
+              maxHeight: 220,
               overflowY: "auto",
               display: "flex",
               flexDirection: "column",
-              gap: 6,
+              gap: 8,
+              paddingRight: 2,
             }}
           >
             {transcripts.length === 0 ? (
               <div style={{ fontSize: 12, color: "#9ca3af", fontStyle: "italic", padding: "6px 0", lineHeight: 1.4 }}>
-                {isListening ? "Listening... Speech from call will appear here. (Ensure Meet captions [cc] are turned on)." : "No transcripts yet."}
+                {isListening ? "Listening... Speech from call will appear here in real time." : "No transcripts yet."}
               </div>
             ) : (
-              transcripts.map((t) => (
-                <div
-                  key={t.id}
-                  style={{
-                    fontSize: 12,
-                    color: "#374151",
-                    backgroundColor: "#f9fafb",
-                    padding: "6px 8px",
-                    borderRadius: 4,
-                    borderLeft: t.isFinal ? "2px solid #2563eb" : "2px solid #10b981",
-                  }}
-                >
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 10, color: "#9ca3af", marginBottom: 2 }}>
-                    <span style={{ fontWeight: 600, color: "#4b5563" }}>{t.speakerId || "Speaker"}</span>
-                    <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                      {!t.isFinal ? (
-                        <span style={{ fontSize: 9, fontWeight: 700, color: "#059669", backgroundColor: "#d1fae5", padding: "1px 5px", borderRadius: 3 }}>
-                          ● Speaking...
+              transcripts.map((t, idx) => {
+                const isNewest = idx === transcripts.length - 1;
+                const secondsAgo = Math.max(0, Math.round((Date.now() - t.endMs) / 1000));
+                const relativeTime = secondsAgo < 5 ? "Just now" : secondsAgo < 60 ? `${secondsAgo}s ago` : `${Math.round(secondsAgo / 60)}m ago`;
+
+                return (
+                  <div
+                    key={t.id}
+                    style={{
+                      fontSize: 12,
+                      backgroundColor: isNewest ? "#eff6ff" : "#ffffff",
+                      padding: "8px 10px",
+                      borderRadius: 6,
+                      border: isNewest ? "2px solid #3b82f6" : "1px solid #e2e8f0",
+                      boxShadow: isNewest ? "0 2px 8px rgba(59, 130, 246, 0.18)" : "0 1px 2px rgba(0,0,0,0.03)",
+                      transition: "all 0.2s ease",
+                    }}
+                  >
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 10, marginBottom: 4 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                        <span style={{ fontWeight: 700, color: isNewest ? "#1d4ed8" : "#475569" }}>
+                          {t.speakerId || "Speaker"} {isNewest && "(Active Now)"}
                         </span>
-                      ) : (
-                        <span style={{ fontSize: 9, color: "#6b7280" }}>✓</span>
-                      )}
-                      <span>{new Date(t.endMs).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}</span>
+                        {isNewest ? (
+                          <span style={{ fontSize: 9, fontWeight: 800, backgroundColor: "#2563eb", color: "#ffffff", padding: "1px 5px", borderRadius: 3, letterSpacing: 0.5 }}>
+                            ● CURRENT
+                          </span>
+                        ) : (
+                          <span style={{ fontSize: 9, fontWeight: 600, backgroundColor: "#f1f5f9", color: "#64748b", padding: "1px 4px", borderRadius: 3 }}>
+                            PAST
+                          </span>
+                        )}
+                      </div>
+                      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                        {!t.isFinal ? (
+                          <span style={{ fontSize: 9, fontWeight: 700, color: "#059669", backgroundColor: "#d1fae5", padding: "1px 5px", borderRadius: 3 }}>
+                            ● Speaking...
+                          </span>
+                        ) : (
+                          <span style={{ fontSize: 9, color: "#6b7280" }}>✓</span>
+                        )}
+                        <span style={{ color: isNewest ? "#1e40af" : "#94a3b8" }}>
+                          {relativeTime} ({new Date(t.endMs).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })})
+                        </span>
+                      </div>
+                    </div>
+                    <div
+                      style={{
+                        lineHeight: 1.45,
+                        color: isNewest ? "#0f172a" : "#334155",
+                        fontWeight: isNewest ? 600 : 400,
+                        fontSize: isNewest ? 12.5 : 12,
+                      }}
+                    >
+                      {t.text}
                     </div>
                   </div>
-                  <div style={{ lineHeight: 1.4, color: "#1f2937" }}>{t.text}</div>
-                </div>
-              ))
+                );
+              })
             )}
           </div>
         )}
@@ -1548,13 +1907,13 @@ export const SidepanelApp: React.FC = () => {
               />
             </div>
 
-            <div style={{ marginBottom: 14 }}>
+            <div style={{ marginBottom: 10 }}>
               <label style={{ display: "block", fontSize: 12, fontWeight: 500, color: "#374151", marginBottom: 4 }}>
                 Registration / Employee IDs (comma-separated)
               </label>
               <input
                 type="text"
-                placeholder="e.g. 21BCE1042, EMP-4021"
+                placeholder="e.g. 21BCE1042, EMP-4021, 117"
                 value={identifiersInput}
                 onChange={(e) => setIdentifiersInput(e.target.value)}
                 style={{
@@ -1566,6 +1925,29 @@ export const SidepanelApp: React.FC = () => {
                   boxSizing: "border-box",
                 }}
               />
+            </div>
+
+            <div style={{ marginBottom: 14 }}>
+              <label style={{ display: "block", fontSize: 12, fontWeight: 500, color: "#374151", marginBottom: 4 }}>
+                Custom Alert Keywords (comma-separated)
+              </label>
+              <input
+                type="text"
+                placeholder="e.g. project alpha, budget, sprint, architecture, deadline"
+                value={keywordsInput}
+                onChange={(e) => setKeywordsInput(e.target.value)}
+                style={{
+                  width: "100%",
+                  padding: "6px 10px",
+                  border: "1px solid #d1d5db",
+                  borderRadius: 6,
+                  fontSize: 13,
+                  boxSizing: "border-box",
+                }}
+              />
+              <div style={{ fontSize: 10, color: "#6b7280", marginTop: 2 }}>
+                OiU alerts you whenever your name, IDs, or any of these custom keywords are spoken.
+              </div>
             </div>
 
             <div style={{ display: "flex", gap: 8 }}>
@@ -1591,6 +1973,7 @@ export const SidepanelApp: React.FC = () => {
                     setNameInput(profile.displayName);
                     setAliasesInput(formatCommaSeparatedList(profile.aliases));
                     setIdentifiersInput(formatCommaSeparatedList(profile.identifiers));
+                    setKeywordsInput(formatCommaSeparatedList(profile.keywords || []));
                     setIsEditingProfile(false);
                   }}
                   style={{
@@ -1644,7 +2027,7 @@ export const SidepanelApp: React.FC = () => {
               </div>
             </div>
 
-            <div>
+            <div style={{ marginBottom: 8 }}>
               <div style={{ fontSize: 11, color: "#6b7280" }}>Registration / ID Numbers</div>
               <div style={{ fontSize: 13, color: "#374151" }}>
                 {profile.identifiers.length > 0 ? (
@@ -1667,6 +2050,34 @@ export const SidepanelApp: React.FC = () => {
                   ))
                 ) : (
                   <span style={{ color: "#9ca3af" }}>None</span>
+                )}
+              </div>
+            </div>
+
+            <div>
+              <div style={{ fontSize: 11, color: "#6b7280" }}>Custom Monitored Keywords</div>
+              <div style={{ fontSize: 13, color: "#374151" }}>
+                {(profile.keywords || []).length > 0 ? (
+                  profile.keywords.map((kw, i) => (
+                    <span
+                      key={i}
+                      style={{
+                        display: "inline-block",
+                        backgroundColor: "#e0f2fe",
+                        color: "#0369a1",
+                        padding: "2px 6px",
+                        borderRadius: 4,
+                        fontSize: 11,
+                        marginRight: 4,
+                        marginTop: 2,
+                        fontWeight: 600,
+                      }}
+                    >
+                      🏷️ {kw}
+                    </span>
+                  ))
+                ) : (
+                  <span style={{ color: "#9ca3af" }}>None (alert on name & IDs only)</span>
                 )}
               </div>
             </div>

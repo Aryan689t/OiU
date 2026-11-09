@@ -1,4 +1,4 @@
-export type MeetingEventType = "NAME_MENTION" | "IDENTIFIER_MENTION" | "DIRECT_QUESTION" | "ATTENDANCE_CALL" | "ACTION_ITEM" | "IMPORTANT_CONTEXT";
+export type MeetingEventType = "NAME_MENTION" | "IDENTIFIER_MENTION" | "KEYWORD_MENTION" | "DIRECT_QUESTION" | "ATTENDANCE_CALL" | "ACTION_ITEM" | "IMPORTANT_CONTEXT";
 export interface MeetingEvent {
     id: string;
     sessionId: string;

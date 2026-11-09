@@ -2,6 +2,12 @@ import { TranscriptSegment } from "@oiu/shared";
 
 console.log("[OiU Content Script] Loaded in Zero-Impact mode.");
 
+// Guard against multiple injections of content script in the same tab
+if ((window as any).__oiuContentScriptActive) {
+  console.log("[OiU Content Script] Already active in this tab, skipping duplicate initialization.");
+} else {
+  (window as any).__oiuContentScriptActive = true;
+
 // Report Google Meet tab detection to service worker
 chrome.runtime.sendMessage({
   type: "MEETING_TAB_DETECTED",
@@ -48,22 +54,33 @@ function isIgnoredUIString(text: string): boolean {
 
 function ensureMeetCaptionsOn() {
   try {
-    // If captions are already on, do nothing
+    // 1. If captions are already on, do nothing
     const captionsOnBtn = document.querySelector(
-      'button[aria-label*="turn off captions" i], button[data-tooltip*="turn off captions" i], button[aria-pressed="true"][aria-label*="caption" i]'
+      'button[aria-label*="turn off captions" i], button[data-tooltip*="turn off captions" i], button[aria-pressed="true"][aria-label*="caption" i], button[jsname="r8qRAd"][aria-pressed="true"]'
     );
     if (captionsOnBtn) {
       return;
     }
 
-    // Only click if it's explicitly an inactive caption button
+    // 2. Only click if it's explicitly an inactive caption button
     const turnOnBtn = document.querySelector(
-      'button[aria-label*="turn on captions" i], button[data-tooltip*="turn on captions" i], button[aria-pressed="false"][aria-label*="caption" i]'
+      'button[aria-label*="turn on captions" i], button[data-tooltip*="turn on captions" i], button[aria-pressed="false"][aria-label*="caption" i], button[jsname="r8qRAd"][aria-pressed="false"]'
     ) as HTMLButtonElement | null;
 
     if (turnOnBtn) {
       turnOnBtn.click();
-      console.log("[OiU] Turned ON Google Meet captions.");
+      console.log("[OiU] Automatically turned ON Google Meet captions.");
+      return;
+    }
+
+    // 3. Fallback: query any button with caption in aria-label or data-tooltip
+    const anyCaptionBtn = Array.from(document.querySelectorAll("button")).find((btn) => {
+      const label = (btn.getAttribute("aria-label") || btn.getAttribute("data-tooltip") || "").toLowerCase();
+      return label.includes("caption") && !label.includes("off") && !label.includes("turn off");
+    });
+    if (anyCaptionBtn && anyCaptionBtn.getAttribute("aria-pressed") !== "true") {
+      anyCaptionBtn.click();
+      console.log("[OiU] Auto-clicked Meet caption toggle button.");
     }
   } catch (err) {
     console.warn("[OiU] Safe note in ensureMeetCaptionsOn:", err);
@@ -272,11 +289,11 @@ function processCaptionText(rawText: string, speakerHint?: string) {
 
     if (!utterance || utterance.length < 2 || isIgnoredUIString(utterance)) return;
 
-    // Prevent duplicate rapid polling jitter within 700ms for the exact same text
+    // Prevent duplicate rapid polling jitter and cross-engine duplicate emission within 2200ms
     const now = Date.now();
     const normalizedKey = utterance.toLowerCase().replace(/[^a-z0-9]/g, "");
     const lastTime = recentUtteranceMap.get(normalizedKey);
-    if (lastTime && now - lastTime < 700) {
+    if (lastTime && now - lastTime < 2200) {
       return;
     }
 
@@ -324,13 +341,15 @@ function baselineExistingCaptions() {
       const text = el.textContent?.trim();
       if (text && text.length > 1) {
         el.dataset.oiuLastText = text;
+        el.dataset.oiuSealedLength = String(text.length); // SEAL all past captions so they are never alerted!
+        el.dataset.oiuLastChangeTime = String(now);
         const normalizedKey = text.toLowerCase().replace(/[^a-z0-9]/g, "");
         if (normalizedKey) {
           recentUtteranceMap.set(normalizedKey, now);
         }
       }
     });
-    console.log(`[OiU] Baselined ${existing.length} existing DOM captions so old past speech is not alerted.`);
+    console.log(`[OiU] Baselined and sealed ${existing.length} existing DOM captions so old past speech is not alerted.`);
   } catch (err) {
     console.warn("[OiU] Error baselining existing captions:", err);
   }
@@ -353,21 +372,66 @@ function scanDOMForCaptions() {
           return;
         }
         const el = node as HTMLElement;
-        const text = el.textContent?.trim();
-        if (text && text.length > 1) {
-          // Zero duplicate reading: if this DOM element has not changed, do nothing!
-          if (el.dataset.oiuLastText === text) {
-            capturedAny = true;
-            return;
-          }
-          el.dataset.oiuLastText = text;
-          capturedAny = true;
+        const fullText = el.textContent?.trim() || "";
+        if (fullText.length < 2) return;
 
-          const parent = el.closest('div.nMxLec, div.iTTPOb, div[jsname="YSvyfd"]');
-          const speakerEl = parent?.querySelector(".NWkf3b, .jxFHg, .zs7LEd, .bFfZTd");
-          const speaker = speakerEl?.textContent?.trim() || "Speaker";
-          processCaptionText(text, speaker);
+        // Zero duplicate reading: if this DOM element has not changed, do nothing!
+        if (el.dataset.oiuLastText === fullText) {
+          capturedAny = true;
+          return;
         }
+
+        const now = Date.now();
+        const lastChangeTime = Number(el.dataset.oiuLastChangeTime || "0");
+        let sealedLength = Number(el.dataset.oiuSealedLength || "0");
+        const prevText = el.dataset.oiuLastText || "";
+
+        // If more than 1800ms has elapsed since the last text update on this node,
+        // the previous phrase is completely finished, so seal it!
+        if (lastChangeTime > 0 && now - lastChangeTime > 1800 && fullText.length > sealedLength) {
+          sealedLength = prevText.length;
+          el.dataset.oiuSealedLength = String(sealedLength);
+        }
+
+        // Keep active speech window fresh: if text grows beyond 1 completed sentence or > 120 chars,
+        // seal older sentences so past minutes of captions are never retained in currentSpeech
+        if (fullText.length - sealedLength > 120) {
+          const tail = fullText.slice(sealedLength);
+          const punctIndices: number[] = [];
+          for (let i = 0; i < tail.length; i++) {
+            if (tail[i] === "?" || tail[i] === "." || tail[i] === "!") {
+              punctIndices.push(i);
+            }
+          }
+          if (punctIndices.length >= 1) {
+            const cutIdx = punctIndices[punctIndices.length - 1] + 1;
+            sealedLength += cutIdx;
+            el.dataset.oiuSealedLength = String(sealedLength);
+          } else if (tail.length > 180) {
+            const safeCut = tail.lastIndexOf(" ", tail.length - 80);
+            if (safeCut > 40) {
+              sealedLength += safeCut + 1;
+              el.dataset.oiuSealedLength = String(sealedLength);
+            }
+          }
+        }
+
+        el.dataset.oiuLastText = fullText;
+        el.dataset.oiuLastChangeTime = String(now);
+        capturedAny = true;
+
+        // Extract ONLY the current active speech (strip previous sealed phrases from 5 minutes ago)
+        let currentSpeech = fullText;
+        if (sealedLength > 0 && fullText.length > sealedLength) {
+          currentSpeech = fullText.slice(sealedLength).trim();
+        }
+
+        if (currentSpeech.length < 2) return;
+
+        const parent = el.closest('div.nMxLec, div.iTTPOb, div[jsname="YSvyfd"]');
+        const speakerEl = parent?.querySelector(".NWkf3b, .jxFHg, .zs7LEd, .bFfZTd");
+        const speaker = speakerEl?.textContent?.trim() || "Speaker";
+        processCaptionText(currentSpeech, speaker);
       });
     }
 
@@ -377,14 +441,54 @@ function scanDOMForCaptions() {
       fallbackContainers.forEach((container) => {
         if (container.closest('[aria-label*="chat" i], [jsname="xySENc"]')) return;
         const el = container as HTMLElement;
-        const text = el.textContent?.trim();
-        if (text && text.length > 2) {
-          if (el.dataset.oiuLastText === text) {
-            return;
-          }
-          el.dataset.oiuLastText = text;
-          processCaptionText(text);
+        const fullText = el.textContent?.trim() || "";
+        if (fullText.length < 2) return;
+
+        if (el.dataset.oiuLastText === fullText) return;
+
+        const now = Date.now();
+        const lastChangeTime = Number(el.dataset.oiuLastChangeTime || "0");
+        let sealedLength = Number(el.dataset.oiuSealedLength || "0");
+        const prevText = el.dataset.oiuLastText || "";
+
+        if (lastChangeTime > 0 && now - lastChangeTime > 1800 && fullText.length > sealedLength) {
+          sealedLength = prevText.length;
+          el.dataset.oiuSealedLength = String(sealedLength);
         }
+
+        // Keep active speech window fresh: if text grows beyond 1 completed sentence or > 120 chars,
+        // seal older sentences so past minutes of captions are never retained in currentSpeech
+        if (fullText.length - sealedLength > 120) {
+          const tail = fullText.slice(sealedLength);
+          const punctIndices: number[] = [];
+          for (let i = 0; i < tail.length; i++) {
+            if (tail[i] === "?" || tail[i] === "." || tail[i] === "!") {
+              punctIndices.push(i);
+            }
+          }
+          if (punctIndices.length >= 1) {
+            const cutIdx = punctIndices[punctIndices.length - 1] + 1;
+            sealedLength += cutIdx;
+            el.dataset.oiuSealedLength = String(sealedLength);
+          } else if (tail.length > 180) {
+            const safeCut = tail.lastIndexOf(" ", tail.length - 80);
+            if (safeCut > 40) {
+              sealedLength += safeCut + 1;
+              el.dataset.oiuSealedLength = String(sealedLength);
+            }
+          }
+        }
+
+        el.dataset.oiuLastText = fullText;
+        el.dataset.oiuLastChangeTime = String(now);
+
+        let currentSpeech = fullText;
+        if (sealedLength > 0 && fullText.length > sealedLength) {
+          currentSpeech = fullText.slice(sealedLength).trim();
+        }
+
+        if (currentSpeech.length < 2) return;
+        processCaptionText(currentSpeech);
       });
     }
   } catch (err) {
@@ -440,9 +544,16 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     return false;
   }
 
+  if (message?.type === "TOGGLE_MEET_CAPTIONS") {
+    ensureMeetCaptionsOn();
+    sendResponse({ success: true });
+    return false;
+  }
+
   if (message?.type === "STOP_MEET_MONITORING") {
     stopMonitoring();
     sendResponse({ success: true, monitoring: false });
     return false;
   }
 });
+}

@@ -6,6 +6,7 @@ const testProfile = {
   displayName: "Aryan",
   aliases: ["Ari", "Tathagat"],
   identifiers: ["117", "10325210117"],
+  keywords: [],
 };
 
 function createSegment(text: string, timestampMs = Date.now(), speakerId = "Speaker") {
@@ -130,4 +131,75 @@ test("EventDetector differentiates duplicate, continuation, and new message turn
   assert.equal(newCall.turnAction, "NEW_ALERT");
   assert.notEqual(newCall.turnId, turn1Id, "Must be a distinct new turn");
   assert.equal(newCall.event?.type, "DIRECT_QUESTION");
+});
+
+test("EventDetector detects user-configured custom keywords dynamically", () => {
+  const customProfile = {
+    displayName: "Jordan",
+    aliases: ["Jordy"],
+    identifiers: ["EMP-500"],
+    keywords: ["quarterly budget", "project titan"],
+  };
+
+  const detector = new EventDetector(customProfile);
+
+  // Keyword mention
+  const res1 = detector.processSegment(createSegment("Please review the quarterly budget spreadsheet."));
+  assert.equal(res1.hasEvent, true);
+  assert.equal(res1.event?.type, "KEYWORD_MENTION");
+  assert.match(res1.event!.explanation || "", /quarterly budget/i);
+
+  // Question on monitored keyword
+  const res2 = detector.processSegment(createSegment("What is the status of project titan?"));
+  assert.equal(res2.hasEvent, true);
+  assert.equal(res2.event?.type, "DIRECT_QUESTION");
+});
+
+test("EventDetector does not trigger false alerts on subsequent speech when user is not called", () => {
+  const genericProfile = {
+    displayName: "Alex",
+    aliases: ["Lex"],
+    identifiers: ["EMP-100"],
+    keywords: ["architecture"],
+  };
+
+  const detector = new EventDetector(genericProfile);
+  let time = 10000;
+
+  // 1. Initial direct question for Alex
+  let stream = "Question for Alex: what is the deployment schedule?";
+  let res = detector.processSegment(createSegment(stream, time));
+  assert.equal(res.hasEvent, true, "Should alert when user name is addressed");
+  assert.equal(res.turnAction, "NEW_ALERT");
+
+  // 2. Immediate connected follow-up
+  time += 1500;
+  stream += " and when is the deadline.";
+  res = detector.processSegment(createSegment(stream, time));
+  assert.equal(res.hasEvent, true);
+  assert.equal(res.turnAction, "UPDATE_ALERT", "Should update in-place without duplicate chime");
+
+  // 3. Unrelated meeting speech occurs (speaker talks to the room or says greetings)
+  time += 4000;
+  stream += " Good morning everyone.";
+  res = detector.processSegment(createSegment(stream, time));
+  assert.equal(res.hasEvent, false, "Must not alert on general greeting speech");
+
+  time += 3000;
+  stream += " Please check your audio.";
+  res = detector.processSegment(createSegment(stream, time));
+  assert.equal(res.hasEvent, false, "Must not alert when user is not called");
+
+  time += 3000;
+  stream += " Moving on to the next topic.";
+  res = detector.processSegment(createSegment(stream, time));
+  assert.equal(res.hasEvent, false, "Must not alert on general meeting speech");
+
+  // 4. User is called again with their ID
+  time += 4000;
+  stream += " EMP-100 can you share your screen?";
+  res = detector.processSegment(createSegment(stream, time));
+  assert.equal(res.hasEvent, true, "Should alert when user ID is called");
+  assert.equal(res.turnAction, "NEW_ALERT");
+  assert.equal(res.event?.transcriptExcerpt, "EMP-100 can you share your screen?");
 });

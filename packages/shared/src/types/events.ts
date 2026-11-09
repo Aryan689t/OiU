@@ -1,6 +1,7 @@
 export type MeetingEventType =
   | "NAME_MENTION"
   | "IDENTIFIER_MENTION"
+  | "KEYWORD_MENTION"
   | "DIRECT_QUESTION"
   | "ATTENDANCE_CALL"
   | "ACTION_ITEM"

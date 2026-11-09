@@ -1,4 +1,5 @@
 import { matchName, matchIdentifier } from "./matcher.js";
+import { getDialogueAnalysis, } from "./sentenceParser.js";
 export class EventDetector {
     profile;
     activeTurn = null;
@@ -38,11 +39,17 @@ export class EventDetector {
         }
         const now = segment.endMs || Date.now();
         const speaker = segment.speakerId || "Speaker";
-        // 1. Check if this is a continuation of the ongoing speech turn
+        const dialogueAnalysis = getDialogueAnalysis(text, this.profile, now, speaker);
+        const sentences = dialogueAnalysis.sentences;
+        const activeSentence = dialogueAnalysis.activeSentence;
+        // Check if the ACTIVE / CURRENT sentence being spoken right now mentions the user
+        // CRITICAL: We only test activeSentence, NEVER preceding completed sentences from minutes ago!
+        const activeMention = this.detectMention(activeSentence.text, segment.sessionId, segment.id, now);
+        // 1. Check if this is a streaming continuation of the active turn
         if (this.activeTurn && this.isContinuationOf(text, this.activeTurn, now, speaker)) {
             const cleanIncoming = text.toLowerCase().replace(/[^a-z0-9]/g, "");
             const cleanCurrent = this.activeTurn.accumulatedText.toLowerCase().replace(/[^a-z0-9]/g, "");
-            // 1a. Exact duplicate check (e.g. rapid DOM poll jitter)
+            // 1a. Exact duplicate poll check
             if (cleanIncoming === cleanCurrent) {
                 return {
                     hasEvent: false,
@@ -51,46 +58,103 @@ export class EventDetector {
                     accumulatedText: this.activeTurn.accumulatedText,
                     isContinuation: true,
                     speakerId: this.activeTurn.speakerId,
+                    sentences,
+                    activeSentence,
+                    dialogueAnalysis,
                 };
             }
-            // 1b. Progressive sentence growth (streaming continuation)
+            // Sentence grew within the current turn
             const updatedText = text.length >= this.activeTurn.accumulatedText.length ? text : this.activeTurn.accumulatedText;
             this.activeTurn.accumulatedText = updatedText;
             this.activeTurn.lastUpdateTime = now;
-            // If active turn already triggered an alert, UPDATE the alert in-place
+            const updatedDialogue = getDialogueAnalysis(updatedText, this.profile, now, speaker);
+            const updatedActiveSentence = updatedDialogue.activeSentence;
+            // Re-evaluate mention on the updated active sentence
+            const updatedMention = this.detectMention(updatedActiveSentence.text, segment.sessionId, segment.id, now);
+            // If active turn already triggered an alert:
             if (this.activeTurn.hasAlert && this.activeTurn.alertEvent) {
-                const lowerText = updatedText.toLowerCase();
-                const isAttendance = this.checkAttendancePattern(lowerText);
-                const isQuestion = !isAttendance && this.checkQuestionPattern(lowerText);
-                this.activeTurn.alertEvent.transcriptExcerpt = updatedText;
-                if (isQuestion && this.activeTurn.alertEvent.type !== "DIRECT_QUESTION") {
-                    this.activeTurn.alertEvent.type = "DIRECT_QUESTION";
-                    this.activeTurn.alertEvent.explanation = "Direct question addressed to you.";
+                // If the active sentence is a NEW, distinct question addressed to the user (e.g. "What is photosynthesis?"):
+                if (updatedDialogue.sentences.length > 1 &&
+                    updatedActiveSentence.relation === "disconnected" &&
+                    updatedActiveSentence.isQuestion &&
+                    updatedMention.hasEvent &&
+                    updatedMention.event) {
+                    this.activeTurn.alertEvent = updatedMention.event;
+                    return {
+                        hasEvent: true,
+                        event: updatedMention.event,
+                        turnAction: "NEW_ALERT",
+                        turnId: this.activeTurn.id,
+                        accumulatedText: updatedText,
+                        isContinuation: true,
+                        speakerId: this.activeTurn.speakerId,
+                        sentences: updatedDialogue.sentences,
+                        activeSentence: updatedActiveSentence,
+                        dialogueAnalysis: updatedDialogue,
+                    };
                 }
-                return {
-                    hasEvent: true,
-                    event: this.activeTurn.alertEvent,
-                    turnAction: "UPDATE_ALERT",
-                    turnId: this.activeTurn.id,
-                    accumulatedText: updatedText,
-                    isContinuation: true,
-                    speakerId: this.activeTurn.speakerId,
-                };
+                // If the sentence is growing within the single turn OR is a connected follow-up (e.g. "tatha explain its function"):
+                if (updatedActiveSentence.relation === "connected" || updatedDialogue.sentences.length <= 1) {
+                    const lowerText = updatedActiveSentence.text.toLowerCase();
+                    const isQuestion = this.checkQuestionPattern(lowerText);
+                    // Update alert excerpt cleanly (only the question + connected follow-up, NOT 500 chars!)
+                    if (updatedDialogue.sentences.length <= 1) {
+                        this.activeTurn.alertEvent.transcriptExcerpt = updatedActiveSentence.text;
+                    }
+                    else {
+                        const prevExcerpt = this.activeTurn.alertEvent.transcriptExcerpt;
+                        if (!prevExcerpt.includes(updatedActiveSentence.text)) {
+                            this.activeTurn.alertEvent.transcriptExcerpt = `${prevExcerpt} ${updatedActiveSentence.text}`.trim();
+                        }
+                    }
+                    if (isQuestion && this.activeTurn.alertEvent.type !== "DIRECT_QUESTION") {
+                        this.activeTurn.alertEvent.type = "DIRECT_QUESTION";
+                        this.activeTurn.alertEvent.explanation = "Direct question addressed to you.";
+                    }
+                    return {
+                        hasEvent: true,
+                        event: this.activeTurn.alertEvent,
+                        turnAction: "UPDATE_ALERT",
+                        turnId: this.activeTurn.id,
+                        accumulatedText: updatedText,
+                        isContinuation: true,
+                        speakerId: this.activeTurn.speakerId,
+                        sentences: updatedDialogue.sentences,
+                        activeSentence: updatedActiveSentence,
+                        dialogueAnalysis: updatedDialogue,
+                    };
+                }
+                // If the active sentence is disconnected and has NO mention (speaker moved on to someone else or other topic)
+                if (updatedActiveSentence.relation === "disconnected" && !updatedMention.hasEvent) {
+                    this.activeTurn.isCompleted = true;
+                    return {
+                        hasEvent: false,
+                        turnAction: "CONTINUATION",
+                        turnId: this.activeTurn.id,
+                        accumulatedText: updatedText,
+                        isContinuation: true,
+                        speakerId: this.activeTurn.speakerId,
+                        sentences: updatedDialogue.sentences,
+                        activeSentence: updatedActiveSentence,
+                        dialogueAnalysis: updatedDialogue,
+                    };
+                }
             }
-            // If active turn has NOT yet triggered an alert, check if this continuation mentions the user
-            const mention = this.detectMention(updatedText, segment.sessionId, segment.id, now);
-            if (mention.hasEvent && mention.event) {
+            // Active turn had not yet alerted, but the active sentence now mentions the user
+            if (updatedMention.hasEvent && updatedMention.event) {
                 this.activeTurn.hasAlert = true;
-                this.activeTurn.alertEvent = mention.event;
-                this.recordAlertedSentence(cleanIncoming, now);
+                this.activeTurn.alertEvent = updatedMention.event;
                 return {
                     hasEvent: true,
-                    event: mention.event,
+                    event: updatedMention.event,
                     turnAction: "NEW_ALERT",
                     turnId: this.activeTurn.id,
                     accumulatedText: updatedText,
                     isContinuation: true,
                     speakerId: this.activeTurn.speakerId,
+                    sentences: updatedDialogue.sentences,
+                    activeSentence: updatedActiveSentence,
+                    dialogueAnalysis: updatedDialogue,
                 };
             }
             return {
@@ -100,9 +164,12 @@ export class EventDetector {
                 accumulatedText: updatedText,
                 isContinuation: true,
                 speakerId: this.activeTurn.speakerId,
+                sentences: updatedDialogue.sentences,
+                activeSentence: updatedActiveSentence,
+                dialogueAnalysis: updatedDialogue,
             };
         }
-        // 2. NEW TURN / NEW MESSAGE (Pause > 2.2s, speaker change, or distinct sentence)
+        // 2. NEW TURN / NEW MESSAGE (Pause > 1.6s, max duration > 3.5s, or speaker change)
         if (this.activeTurn) {
             this.activeTurn.isCompleted = true;
         }
@@ -116,20 +183,21 @@ export class EventDetector {
             isCompleted: false,
         };
         this.activeTurn = newTurn;
-        const mention = this.detectMention(text, segment.sessionId, segment.id, now);
-        if (mention.hasEvent && mention.event) {
+        // In a new turn, ONLY trigger an alert if the ACTIVE sentence mentions the user!
+        if (activeMention.hasEvent && activeMention.event) {
             newTurn.hasAlert = true;
-            newTurn.alertEvent = mention.event;
-            const clean = text.toLowerCase().replace(/[^a-z0-9]/g, "");
-            this.recordAlertedSentence(clean, now);
+            newTurn.alertEvent = activeMention.event;
             return {
                 hasEvent: true,
-                event: mention.event,
+                event: activeMention.event,
                 turnAction: "NEW_ALERT",
                 turnId: newTurn.id,
                 accumulatedText: text,
                 isContinuation: false,
                 speakerId: speaker,
+                sentences,
+                activeSentence,
+                dialogueAnalysis,
             };
         }
         return {
@@ -139,31 +207,41 @@ export class EventDetector {
             accumulatedText: text,
             isContinuation: false,
             speakerId: speaker,
+            sentences,
+            activeSentence,
+            dialogueAnalysis,
         };
     }
     isContinuationOf(incomingText, currentTurn, now, speaker) {
         if (currentTurn.isCompleted)
             return false;
-        // Allow up to 2.4 seconds between interim chunks from the same speaker
-        if (now - currentTurn.lastUpdateTime > 2400)
+        // Hard ceiling: A single spoken utterance continuation cannot span more than 3.5 seconds
+        if (now - currentTurn.startTime > 3500)
             return false;
-        // Speaker check
-        if (speaker !== "Speaker" && currentTurn.speakerId !== "Speaker" && speaker !== currentTurn.speakerId) {
+        // Pause limit: If speaker stopped talking for > 1600ms, sentence is completed
+        if (now - currentTurn.lastUpdateTime > 1600)
+            return false;
+        // Speaker check (coalesce generic or voice engine speaker tags if text is continuous)
+        const isVoiceOrGeneric = speaker === "Speaker" ||
+            currentTurn.speakerId === "Speaker" ||
+            speaker === "Live Voice" ||
+            currentTurn.speakerId === "Live Voice";
+        if (!isVoiceOrGeneric && speaker !== currentTurn.speakerId) {
             return false;
         }
         const cleanIncoming = incomingText.toLowerCase().replace(/[^a-z0-9]/g, "");
         const cleanCurrent = currentTurn.accumulatedText.toLowerCase().replace(/[^a-z0-9]/g, "");
         if (!cleanIncoming || !cleanCurrent)
             return false;
-        // 1. One is a prefix or extension of the other (growing sentence)
+        // 1. Growing sentence: incoming starts with current or vice versa
         if (cleanIncoming.startsWith(cleanCurrent) || cleanCurrent.startsWith(cleanIncoming)) {
             return true;
         }
-        // 2. Contains substring
+        // 2. Substring containment within the 3.5s window
         if (cleanIncoming.includes(cleanCurrent) || cleanCurrent.includes(cleanIncoming)) {
             return true;
         }
-        // 3. Significant word overlap (handles live STT interim word replacements)
+        // 3. Significant word overlap (handles STT interim adjustments)
         const incomingWords = incomingText.toLowerCase().split(/\s+/).filter((w) => w.length > 2);
         const currentWords = currentTurn.accumulatedText.toLowerCase().split(/\s+/).filter((w) => w.length > 2);
         if (incomingWords.length > 0 && currentWords.length > 0) {
@@ -173,7 +251,7 @@ export class EventDetector {
                     common++;
             }
             const overlapRatio = common / Math.min(incomingWords.length, currentWords.length);
-            if (overlapRatio >= 0.5) {
+            if (overlapRatio >= 0.6) {
                 return true;
             }
         }
@@ -240,12 +318,33 @@ export class EventDetector {
                 return { hasEvent: true, event };
             }
         }
-        return { hasEvent: false };
-    }
-    recordAlertedSentence(cleanSentence, now) {
-        if (cleanSentence && cleanSentence.length >= 2) {
-            this.alertedSentenceHashes.set(cleanSentence, now);
+        // 3. Check User-Configured Keywords / Monitored Topics
+        if (this.profile.keywords && this.profile.keywords.length > 0) {
+            for (const kw of this.profile.keywords) {
+                if (!kw || kw.trim().length === 0)
+                    continue;
+                const cleanKw = kw.trim().toLowerCase();
+                if (cleanKw.length >= 2 && lowerText.includes(cleanKw)) {
+                    const isQuestion = this.checkQuestionPattern(lowerText);
+                    const eventType = isQuestion ? "DIRECT_QUESTION" : "KEYWORD_MENTION";
+                    const event = {
+                        id: `evt_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+                        sessionId,
+                        type: eventType,
+                        transcriptExcerpt: text,
+                        evidenceSegmentIds: [segmentId],
+                        timestampMs: now,
+                        confidence: 0.95,
+                        urgency: isQuestion ? "high" : "medium",
+                        explanation: isQuestion
+                            ? `Question regarding your keyword "${kw.trim()}".`
+                            : `Your monitored keyword "${kw.trim()}" was mentioned.`,
+                    };
+                    return { hasEvent: true, event };
+                }
+            }
         }
+        return { hasEvent: false };
     }
     checkQuestionPattern(lowerText) {
         if (lowerText.includes("?"))

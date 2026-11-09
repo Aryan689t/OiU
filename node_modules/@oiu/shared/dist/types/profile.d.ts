@@ -2,6 +2,7 @@ export interface UserProfile {
     displayName: string;
     aliases: string[];
     identifiers: string[];
+    keywords: string[];
 }
 export declare const DEFAULT_PROFILE: UserProfile;
 export declare function parseCommaSeparatedList(input: string): string[];

@@ -2,6 +2,7 @@ export const DEFAULT_PROFILE = {
     displayName: "",
     aliases: [],
     identifiers: [],
+    keywords: [],
 };
 export function parseCommaSeparatedList(input) {
     if (!input)

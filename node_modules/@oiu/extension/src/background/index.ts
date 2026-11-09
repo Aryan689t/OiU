@@ -223,14 +223,21 @@ chrome.runtime.onMessage.addListener((message: any, _sender, sendResponse) => {
           broadcastStateChange();
           sendResponse({ success: true, session: currentSession });
 
-          // Ensure content script is running and start caption monitoring
-          chrome.scripting.executeScript({
-            target: { tabId: targetTabId },
-            files: ["content.js"],
-          }).catch(() => {}).finally(() => {
-            chrome.tabs.sendMessage(targetTabId, { type: "START_MEET_MONITORING" }).catch((err) => {
-              console.warn("[OiU] Content script not reachable:", err);
-            });
+          // Send start message; if tab was open before extension install, inject on demand
+          chrome.tabs.sendMessage(targetTabId, { type: "START_MEET_MONITORING" }, (resp) => {
+            if (chrome.runtime.lastError || !resp?.success) {
+              chrome.scripting
+                .executeScript({
+                  target: { tabId: targetTabId },
+                  files: ["content.js"],
+                })
+                .then(() => {
+                  chrome.tabs.sendMessage(targetTabId, { type: "START_MEET_MONITORING" }).catch(() => {});
+                })
+                .catch((err) => {
+                  console.warn("[OiU] Content script on-demand injection note:", err);
+                });
+            }
           });
         } catch (err: any) {
           console.error("[OiU Service Worker] Start error:", err);

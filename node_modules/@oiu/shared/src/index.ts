@@ -6,3 +6,4 @@ export * from "./types/context.js";
 export * from "./types/messages.js";
 export * from "./detection/detector.js";
 export * from "./detection/matcher.js";
+export * from "./detection/sentenceParser.js";

@@ -2,12 +2,14 @@ export interface UserProfile {
   displayName: string;
   aliases: string[];
   identifiers: string[]; // Registration numbers, roll numbers, employee IDs
+  keywords: string[]; // Custom alert keywords, topics, project names
 }
 
 export const DEFAULT_PROFILE: UserProfile = {
   displayName: "",
   aliases: [],
   identifiers: [],
+  keywords: [],
 };
 
 export function parseCommaSeparatedList(input: string): string[] {
