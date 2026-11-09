@@ -128,11 +128,9 @@ const COMMON_STT_CONFUSIONS: Record<string, string[]> = {
   "aryan": [
     "a ryan",
     "iron",
-    "ryan",
     "arian",
     "aryen",
     "aaryan",
-    "ion",
     "are in",
   ],
 };
@@ -173,32 +171,18 @@ export function matchName(text: string, targetName: string): MatchResult {
     return { matched: true, confidence: 0.98, matchedName: targetName };
   }
 
-  // 3. Known STT acoustic confusions dictionary check
+  // 3. Known STT acoustic confusions dictionary check on text
   const knownConfusions = COMMON_STT_CONFUSIONS[compactTarget];
   if (knownConfusions) {
     for (const confusion of knownConfusions) {
       const confusionRegex = new RegExp(`(^|[^a-z0-9])${escapeRegExp(confusion)}($|[^a-z0-9])`, "i");
-      if (confusionRegex.test(lowerText) || compactText.includes(confusion.replace(/[^a-z0-9]/g, ""))) {
+      if (confusionRegex.test(lowerText)) {
         return { matched: true, confidence: 0.96, matchedName: targetName };
       }
     }
   }
 
-  // 4. Consonant Skeleton Match on compressed text
-  const targetSkeleton = consonantSkeleton(compactTarget);
-  const textSkeleton = consonantSkeleton(compactText);
-  if (targetSkeleton.length >= 3 && textSkeleton.includes(targetSkeleton)) {
-    return { matched: true, confidence: 0.95, matchedName: targetName };
-  }
-
-  // 5. Phonetic match on compressed text
-  const phoneticText = phoneticNormalize(compactText);
-  const phoneticTarget = phoneticNormalize(compactTarget);
-  if (phoneticTarget.length >= 3 && phoneticText.includes(phoneticTarget)) {
-    return { matched: true, confidence: 0.95, matchedName: targetName };
-  }
-
-  // 6. Token & N-Gram matching with Sliding Window
+  // 4. Token & N-Gram matching with Sliding Window (Word-boundary scoped to prevent ambient noise matching)
   const tokens = lowerText
     .replace(/[^a-z0-9\s]/g, " ")
     .split(/\s+/)
@@ -206,10 +190,12 @@ export function matchName(text: string, targetName: string): MatchResult {
 
   const targetWords = target.split(/\s+/).filter(Boolean);
   const targetWordCount = Math.max(1, targetWords.length);
+  const targetSkeleton = consonantSkeleton(compactTarget);
+  const phoneticTarget = phoneticNormalize(compactTarget);
 
   const maxDistance = target.length <= 4 ? 1 : 2;
 
-  // Window sizes from 1 up to targetWordCount + 2 (handles multi-word translations like "the target")
+  // Window sizes from 1 up to targetWordCount + 2 (handles multi-word STT confusions like "the target")
   const minWin = Math.max(1, targetWordCount - 1);
   const maxWin = targetWordCount + 2;
 
@@ -223,7 +209,7 @@ export function matchName(text: string, targetName: string): MatchResult {
         return { matched: true, confidence: 0.96, matchedName: targetName };
       }
 
-      // Consonant skeleton match on window
+      // Exact consonant skeleton match on token window (e.g. "ttgt" == "ttgt" for "the target" == "tathagat")
       const winSkeleton = consonantSkeleton(windowCompact);
       if (winSkeleton && targetSkeleton && winSkeleton.length >= 3) {
         if (winSkeleton === targetSkeleton) {
@@ -234,21 +220,26 @@ export function matchName(text: string, targetName: string): MatchResult {
         }
       }
 
-      // Direct edit distance on window string
+      // Phonetic key match on window (handles "Aaryan", "Arian", "Tathagath")
+      const winPhonetic = phoneticNormalize(windowCompact);
+      if (winPhonetic && phoneticTarget && winPhonetic.length >= 3) {
+        if (winPhonetic === phoneticTarget) {
+          return { matched: true, confidence: 0.95, matchedName: targetName };
+        }
+        const pDist = levenshteinDistance(winPhonetic, phoneticTarget);
+        if (pDist <= 1 && phoneticTarget.length >= 5 && winPhonetic[0] === phoneticTarget[0]) {
+          return { matched: true, confidence: 0.88, matchedName: targetName };
+        }
+      }
+
+      // Direct edit distance on window token
       const dist = levenshteinDistance(windowCompact, compactTarget);
       if (dist <= maxDistance && dist / target.length <= 0.3) {
+        // Guard against other participant names (e.g. "ryan" matching "aryan")
+        if (target.length <= 5 && (compactTarget.endsWith(windowCompact) || compactTarget.startsWith(windowCompact)) && windowCompact.length < compactTarget.length) {
+          continue;
+        }
         return { matched: true, confidence: 0.92, matchedName: targetName };
-      }
-
-      // Phonetic key distance on window
-      const winPhonetic = phoneticNormalize(windowCompact);
-      if (winPhonetic === phoneticTarget) {
-        return { matched: true, confidence: 0.95, matchedName: targetName };
-      }
-
-      const pDist = levenshteinDistance(winPhonetic, phoneticTarget);
-      if (pDist <= 1 && phoneticTarget.length >= 4) {
-        return { matched: true, confidence: 0.88, matchedName: targetName };
       }
     }
   }

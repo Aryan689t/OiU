@@ -185,13 +185,70 @@ export const SidepanelApp: React.FC = () => {
     }
   }, []);
 
+  const updateActiveAlert = useCallback((event: MeetingEvent) => {
+    setActiveAlert((prev) => {
+      if (!prev) return event;
+      return {
+        ...prev,
+        type: event.type,
+        transcriptExcerpt: event.transcriptExcerpt,
+        explanation: event.explanation,
+      };
+    });
+
+    setAlertsHistory((prev) => {
+      if (prev.length === 0) return [event];
+      const copy = [...prev];
+      copy[0] = {
+        ...copy[0],
+        type: event.type,
+        transcriptExcerpt: event.transcriptExcerpt,
+        explanation: event.explanation,
+      };
+      return copy;
+    });
+
+    // Re-evaluate 0ms smart response for updated excerpt
+    const updatedResponses = getInstantSmartResponses(event, profileRef.current);
+    setAiResponsesMap((prev) => ({ ...prev, [event.id]: updatedResponses }));
+
+    // If Gemini API Key is active, refine AI response for full updated question
+    if (geminiApiKeyRef.current) {
+      const recentCtx = transcriptsRef.current.slice(-4).map((t) => `${t.speakerId || "Speaker"}: ${t.text}`).join("\n");
+      generateSmartResponses(event, profileRef.current, geminiApiKeyRef.current, recentCtx)
+        .then((responses) => {
+          setAiResponsesMap((prev) => ({ ...prev, [event.id]: responses }));
+        })
+        .catch(() => {});
+    }
+  }, []);
+
   const profileRef = React.useRef<UserProfile>(profile);
   profileRef.current = profile;
 
   const sessionRef = React.useRef<SessionInfo>(session);
   sessionRef.current = session;
 
-  const detectorRef = React.useRef<EventDetector>(new EventDetector(profile, 4000));
+  const detectorRef = React.useRef<EventDetector>(new EventDetector(profile));
+
+  // Auto-finalize speech turns when speaker pauses > 2.2 seconds
+  useEffect(() => {
+    const timer = setInterval(() => {
+      const now = Date.now();
+      setTranscripts((prev) => {
+        let changed = false;
+        const updated = prev.map((seg) => {
+          if (!seg.isFinal && now - seg.endMs > 2200) {
+            changed = true;
+            return { ...seg, isFinal: true };
+          }
+          return seg;
+        });
+        return changed ? updated : prev;
+      });
+    }, 800);
+    return () => clearInterval(timer);
+  }, []);
 
   const fetchSessionState = useCallback(() => {
     setIsCheckingTab(true);
@@ -248,24 +305,52 @@ export const SidepanelApp: React.FC = () => {
           setLastSpeechTime(Date.now());
         }
       } else if (msg.type === "TRANSCRIPT_SEGMENT" && msg.segment) {
-        // Prevent duplicate consecutive transcript lines
-        setTranscripts((prev) => {
-          if (prev.length > 0) {
-            const last = prev[prev.length - 1];
-            if (last.id === msg.segment.id || (last.text.trim() === msg.segment.text.trim() && Math.abs((msg.segment.endMs || 0) - (last.endMs || 0)) < 3000)) {
-              return prev;
-            }
-          }
-          return [...prev.slice(-50), msg.segment];
-        });
-        setLastSpeechTime(Date.now());
+        const result = detectorRef.current.processSegment(msg.segment);
+
+        if (result.turnAction === "NO_OP") {
+          return;
+        }
+
+        const now = Date.now();
+        setLastSpeechTime(now);
         setIsVoiceActive(true);
 
-        // Smart Fuzzy & Phonetic Detection with 4-second global cooldown & sentence deduplication
-        const result = detectorRef.current.processSegment(msg.segment);
-        if (result.hasEvent && result.event) {
+        // Update transcripts with Turn-based streaming vs new turn
+        setTranscripts((prev) => {
+          if (prev.length > 0 && result.isContinuation) {
+            const copy = [...prev];
+            const last = { ...copy[copy.length - 1] };
+            if (last.id === result.turnId || Math.abs(now - last.endMs) < 3000) {
+              last.text = result.accumulatedText;
+              last.endMs = now;
+              last.isFinal = false;
+              copy[copy.length - 1] = last;
+              return copy;
+            }
+          }
+
+          // New Turn
+          const copy = prev.map((t) => ({ ...t, isFinal: true }));
+          const newSeg: TranscriptSegment = {
+            id: result.turnId,
+            sessionId: msg.segment.sessionId || "meet_call",
+            text: result.accumulatedText || msg.segment.text,
+            speakerId: result.speakerId || msg.segment.speakerId || "Speaker",
+            startMs: now,
+            endMs: now,
+            isFinal: false,
+            confidence: 0.98,
+          };
+          return [...copy.slice(-40), newSeg];
+        });
+
+        // Trigger or update alert based on TurnAction
+        if (result.turnAction === "NEW_ALERT" && result.event) {
           console.log("[OiU Mention Detected!]:", result.event);
           triggerAlert(result.event);
+        } else if (result.turnAction === "UPDATE_ALERT" && result.event) {
+          console.log("[OiU Alert Excerpt Updated]:", result.event.transcriptExcerpt);
+          updateActiveAlert(result.event);
         }
       }
     };
@@ -274,7 +359,7 @@ export const SidepanelApp: React.FC = () => {
     return () => {
       chrome.runtime.onMessage.removeListener(messageListener);
     };
-  }, [triggerAlert]);
+  }, [triggerAlert, updateActiveAlert]);
 
   const handleSaveProfile = () => {
     const newProfile: UserProfile = {
@@ -1135,14 +1220,23 @@ export const SidepanelApp: React.FC = () => {
                     backgroundColor: "#f9fafb",
                     padding: "6px 8px",
                     borderRadius: 4,
-                    borderLeft: "2px solid #2563eb",
+                    borderLeft: t.isFinal ? "2px solid #2563eb" : "2px solid #10b981",
                   }}
                 >
-                  <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, color: "#9ca3af", marginBottom: 2 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 10, color: "#9ca3af", marginBottom: 2 }}>
                     <span style={{ fontWeight: 600, color: "#4b5563" }}>{t.speakerId || "Speaker"}</span>
-                    <span>{new Date(t.endMs).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}</span>
+                    <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                      {!t.isFinal ? (
+                        <span style={{ fontSize: 9, fontWeight: 700, color: "#059669", backgroundColor: "#d1fae5", padding: "1px 5px", borderRadius: 3 }}>
+                          ● Speaking...
+                        </span>
+                      ) : (
+                        <span style={{ fontSize: 9, color: "#6b7280" }}>✓</span>
+                      )}
+                      <span>{new Date(t.endMs).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}</span>
+                    </div>
                   </div>
-                  <div>{t.text}</div>
+                  <div style={{ lineHeight: 1.4, color: "#1f2937" }}>{t.text}</div>
                 </div>
               ))
             )}

@@ -1,22 +1,38 @@
 import { UserProfile } from "../types/profile.js";
 import { TranscriptSegment } from "../types/transcript.js";
 import { MeetingEvent } from "../types/events.js";
+export type TurnAction = "NEW_ALERT" | "UPDATE_ALERT" | "CONTINUATION" | "NEW_TURN" | "NO_OP";
 export interface DetectionResult {
     hasEvent: boolean;
     event?: MeetingEvent;
+    turnAction: TurnAction;
+    turnId: string;
+    accumulatedText: string;
+    isContinuation: boolean;
+    speakerId: string;
+}
+export interface SpeechTurn {
+    id: string;
+    speakerId: string;
+    accumulatedText: string;
+    startTime: number;
+    lastUpdateTime: number;
+    hasAlert: boolean;
+    alertEvent?: MeetingEvent;
+    isCompleted: boolean;
 }
 export declare class EventDetector {
     private profile;
-    private lastAlertTimestamp;
-    private globalCooldownMs;
+    private activeTurn;
     private alertedSentenceHashes;
-    constructor(profile: UserProfile, globalCooldownMs?: number);
+    constructor(profile: UserProfile, _legacyCooldownMs?: number);
     updateProfile(profile: UserProfile): void;
     resetHistory(): void;
     exportAlertedHashes(): [string, number][];
     importAlertedHashes(entries: [string, number][]): void;
     processSegment(segment: TranscriptSegment): DetectionResult;
-    private isAlreadyAlertedSentence;
+    private isContinuationOf;
+    private detectMention;
     private recordAlertedSentence;
     private checkQuestionPattern;
     private checkAttendancePattern;

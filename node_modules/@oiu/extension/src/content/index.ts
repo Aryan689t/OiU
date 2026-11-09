@@ -272,20 +272,20 @@ function processCaptionText(rawText: string, speakerHint?: string) {
 
     if (!utterance || utterance.length < 2 || isIgnoredUIString(utterance)) return;
 
-    // Short-term deduplication: prevent re-emitting the exact same utterance within 4 seconds
+    // Prevent duplicate rapid polling jitter within 700ms for the exact same text
     const now = Date.now();
     const normalizedKey = utterance.toLowerCase().replace(/[^a-z0-9]/g, "");
     const lastTime = recentUtteranceMap.get(normalizedKey);
-    if (lastTime && now - lastTime < 4000) {
+    if (lastTime && now - lastTime < 700) {
       return;
     }
 
     recentUtteranceMap.set(normalizedKey, now);
 
-    // Clean old entries past 30 seconds
-    if (recentUtteranceMap.size > 100) {
+    // Clean old entries past 15 seconds
+    if (recentUtteranceMap.size > 80) {
       for (const [key, time] of recentUtteranceMap.entries()) {
-        if (now - time > 30000) {
+        if (now - time > 15000) {
           recentUtteranceMap.delete(key);
         }
       }

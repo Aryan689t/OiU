@@ -3,20 +3,36 @@ import { TranscriptSegment } from "../types/transcript.js";
 import { MeetingEvent, MeetingEventType } from "../types/events.js";
 import { matchName, matchIdentifier } from "./matcher.js";
 
+export type TurnAction = "NEW_ALERT" | "UPDATE_ALERT" | "CONTINUATION" | "NEW_TURN" | "NO_OP";
+
 export interface DetectionResult {
   hasEvent: boolean;
   event?: MeetingEvent;
+  turnAction: TurnAction;
+  turnId: string;
+  accumulatedText: string;
+  isContinuation: boolean;
+  speakerId: string;
+}
+
+export interface SpeechTurn {
+  id: string;
+  speakerId: string;
+  accumulatedText: string;
+  startTime: number;
+  lastUpdateTime: number;
+  hasAlert: boolean;
+  alertEvent?: MeetingEvent;
+  isCompleted: boolean;
 }
 
 export class EventDetector {
   private profile: UserProfile;
-  private lastAlertTimestamp = 0;
-  private globalCooldownMs: number;
+  private activeTurn: SpeechTurn | null = null;
   private alertedSentenceHashes = new Map<string, number>();
 
-  constructor(profile: UserProfile, globalCooldownMs = 4000) {
+  constructor(profile: UserProfile, _legacyCooldownMs = 0) {
     this.profile = profile;
-    this.globalCooldownMs = globalCooldownMs;
   }
 
   public updateProfile(profile: UserProfile) {
@@ -24,7 +40,7 @@ export class EventDetector {
   }
 
   public resetHistory() {
-    this.lastAlertTimestamp = 0;
+    this.activeTurn = null;
     this.alertedSentenceHashes.clear();
   }
 
@@ -43,30 +59,192 @@ export class EventDetector {
 
   public processSegment(segment: TranscriptSegment): DetectionResult {
     const text = segment.text.trim();
-    if (!text || text.length < 2) return { hasEvent: false };
+    if (!text || text.length < 2) {
+      return {
+        hasEvent: false,
+        turnAction: "NO_OP",
+        turnId: this.activeTurn?.id || "",
+        accumulatedText: this.activeTurn?.accumulatedText || "",
+        isContinuation: false,
+        speakerId: segment.speakerId || "Speaker",
+      };
+    }
 
     const now = segment.endMs || Date.now();
+    const speaker = segment.speakerId || "Speaker";
 
-    // 1. Check Global Cooldown: Prevent repeated alert chimes within 8s of any alert
-    if (now - this.lastAlertTimestamp < this.globalCooldownMs) {
-      return { hasEvent: false };
+    // 1. Check if this is a continuation of the ongoing speech turn
+    if (this.activeTurn && this.isContinuationOf(text, this.activeTurn, now, speaker)) {
+      const cleanIncoming = text.toLowerCase().replace(/[^a-z0-9]/g, "");
+      const cleanCurrent = this.activeTurn.accumulatedText.toLowerCase().replace(/[^a-z0-9]/g, "");
+
+      // 1a. Exact duplicate check (e.g. rapid DOM poll jitter)
+      if (cleanIncoming === cleanCurrent) {
+        return {
+          hasEvent: false,
+          turnAction: "NO_OP",
+          turnId: this.activeTurn.id,
+          accumulatedText: this.activeTurn.accumulatedText,
+          isContinuation: true,
+          speakerId: this.activeTurn.speakerId,
+        };
+      }
+
+      // 1b. Progressive sentence growth (streaming continuation)
+      const updatedText = text.length >= this.activeTurn.accumulatedText.length ? text : this.activeTurn.accumulatedText;
+      this.activeTurn.accumulatedText = updatedText;
+      this.activeTurn.lastUpdateTime = now;
+
+      // If active turn already triggered an alert, UPDATE the alert in-place
+      if (this.activeTurn.hasAlert && this.activeTurn.alertEvent) {
+        const lowerText = updatedText.toLowerCase();
+        const isAttendance = this.checkAttendancePattern(lowerText);
+        const isQuestion = !isAttendance && this.checkQuestionPattern(lowerText);
+
+        this.activeTurn.alertEvent.transcriptExcerpt = updatedText;
+        if (isQuestion && this.activeTurn.alertEvent.type !== "DIRECT_QUESTION") {
+          this.activeTurn.alertEvent.type = "DIRECT_QUESTION";
+          this.activeTurn.alertEvent.explanation = "Direct question addressed to you.";
+        }
+
+        return {
+          hasEvent: true,
+          event: this.activeTurn.alertEvent,
+          turnAction: "UPDATE_ALERT",
+          turnId: this.activeTurn.id,
+          accumulatedText: updatedText,
+          isContinuation: true,
+          speakerId: this.activeTurn.speakerId,
+        };
+      }
+
+      // If active turn has NOT yet triggered an alert, check if this continuation mentions the user
+      const mention = this.detectMention(updatedText, segment.sessionId, segment.id, now);
+      if (mention.hasEvent && mention.event) {
+        this.activeTurn.hasAlert = true;
+        this.activeTurn.alertEvent = mention.event;
+        this.recordAlertedSentence(cleanIncoming, now);
+
+        return {
+          hasEvent: true,
+          event: mention.event,
+          turnAction: "NEW_ALERT",
+          turnId: this.activeTurn.id,
+          accumulatedText: updatedText,
+          isContinuation: true,
+          speakerId: this.activeTurn.speakerId,
+        };
+      }
+
+      return {
+        hasEvent: false,
+        turnAction: "CONTINUATION",
+        turnId: this.activeTurn.id,
+        accumulatedText: updatedText,
+        isContinuation: true,
+        speakerId: this.activeTurn.speakerId,
+      };
     }
 
-    // 2. Check Sentence Fingerprint: Prevent duplicate alerts for the exact same progressive sentence
-    const cleanSentence = text.toLowerCase().replace(/[^a-z0-9]/g, "");
-    if (this.isAlreadyAlertedSentence(cleanSentence, now)) {
-      return { hasEvent: false };
+    // 2. NEW TURN / NEW MESSAGE (Pause > 2.2s, speaker change, or distinct sentence)
+    if (this.activeTurn) {
+      this.activeTurn.isCompleted = true;
     }
 
+    const newTurn: SpeechTurn = {
+      id: `turn_${now}_${Math.random().toString(36).substring(2, 6)}`,
+      speakerId: speaker,
+      accumulatedText: text,
+      startTime: now,
+      lastUpdateTime: now,
+      hasAlert: false,
+      isCompleted: false,
+    };
+    this.activeTurn = newTurn;
+
+    const mention = this.detectMention(text, segment.sessionId, segment.id, now);
+    if (mention.hasEvent && mention.event) {
+      newTurn.hasAlert = true;
+      newTurn.alertEvent = mention.event;
+      const clean = text.toLowerCase().replace(/[^a-z0-9]/g, "");
+      this.recordAlertedSentence(clean, now);
+
+      return {
+        hasEvent: true,
+        event: mention.event,
+        turnAction: "NEW_ALERT",
+        turnId: newTurn.id,
+        accumulatedText: text,
+        isContinuation: false,
+        speakerId: speaker,
+      };
+    }
+
+    return {
+      hasEvent: false,
+      turnAction: "NEW_TURN",
+      turnId: newTurn.id,
+      accumulatedText: text,
+      isContinuation: false,
+      speakerId: speaker,
+    };
+  }
+
+  private isContinuationOf(incomingText: string, currentTurn: SpeechTurn, now: number, speaker: string): boolean {
+    if (currentTurn.isCompleted) return false;
+    // Allow up to 2.4 seconds between interim chunks from the same speaker
+    if (now - currentTurn.lastUpdateTime > 2400) return false;
+
+    // Speaker check
+    if (speaker !== "Speaker" && currentTurn.speakerId !== "Speaker" && speaker !== currentTurn.speakerId) {
+      return false;
+    }
+
+    const cleanIncoming = incomingText.toLowerCase().replace(/[^a-z0-9]/g, "");
+    const cleanCurrent = currentTurn.accumulatedText.toLowerCase().replace(/[^a-z0-9]/g, "");
+
+    if (!cleanIncoming || !cleanCurrent) return false;
+
+    // 1. One is a prefix or extension of the other (growing sentence)
+    if (cleanIncoming.startsWith(cleanCurrent) || cleanCurrent.startsWith(cleanIncoming)) {
+      return true;
+    }
+
+    // 2. Contains substring
+    if (cleanIncoming.includes(cleanCurrent) || cleanCurrent.includes(cleanIncoming)) {
+      return true;
+    }
+
+    // 3. Significant word overlap (handles live STT interim word replacements)
+    const incomingWords = incomingText.toLowerCase().split(/\s+/).filter((w) => w.length > 2);
+    const currentWords = currentTurn.accumulatedText.toLowerCase().split(/\s+/).filter((w) => w.length > 2);
+    if (incomingWords.length > 0 && currentWords.length > 0) {
+      let common = 0;
+      for (const w of incomingWords) {
+        if (currentWords.includes(w)) common++;
+      }
+      const overlapRatio = common / Math.min(incomingWords.length, currentWords.length);
+      if (overlapRatio >= 0.5) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  private detectMention(
+    text: string,
+    sessionId: string,
+    segmentId: string,
+    now: number
+  ): { hasEvent: boolean; event?: MeetingEvent } {
     const lowerText = text.toLowerCase();
 
-    // 3. Check Identifiers (Registration numbers, Roll numbers, Employee IDs)
+    // 1. Check Identifiers (Registration numbers, Roll numbers, IDs)
     for (const rawId of this.profile.identifiers) {
+      if (!rawId || rawId.trim().length === 0) continue;
       const match = matchIdentifier(text, rawId);
       if (match.matched) {
-        this.lastAlertTimestamp = now;
-        this.recordAlertedSentence(cleanSentence, now);
-
         const isAttendance = this.checkAttendancePattern(lowerText);
         const isQuestion = !isAttendance && this.checkQuestionPattern(lowerText);
         const eventType: MeetingEventType = isAttendance
@@ -77,10 +255,10 @@ export class EventDetector {
 
         const event: MeetingEvent = {
           id: `evt_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
-          sessionId: segment.sessionId,
+          sessionId,
           type: eventType,
           transcriptExcerpt: text,
-          evidenceSegmentIds: [segment.id],
+          evidenceSegmentIds: [segmentId],
           timestampMs: now,
           confidence: match.confidence,
           urgency: "high",
@@ -95,32 +273,32 @@ export class EventDetector {
       }
     }
 
-    // 4. Check Display Name and Aliases with Fuzzy, Phonetic & Consonant Skeleton Matching
+    // 2. Check Display Name and Aliases - SORT LONGEST FIRST
+    // Ensures specific names ("Tathagat", len 8) are evaluated before shorter substrings ("Aryan", len 5)
     const nameTargets = [this.profile.displayName, ...this.profile.aliases]
       .map((n) => n.trim())
-      .filter((n) => n.length > 0);
+      .filter((n) => n.length > 0)
+      .filter((val, idx, arr) => arr.indexOf(val) === idx)
+      .sort((a, b) => b.length - a.length);
 
     for (const rawName of nameTargets) {
       const match = matchName(text, rawName);
       if (match.matched) {
-        this.lastAlertTimestamp = now;
-        this.recordAlertedSentence(cleanSentence, now);
-
         const isQuestion = this.checkQuestionPattern(lowerText);
         const eventType: MeetingEventType = isQuestion ? "DIRECT_QUESTION" : "NAME_MENTION";
 
         const event: MeetingEvent = {
           id: `evt_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
-          sessionId: segment.sessionId,
+          sessionId,
           type: eventType,
           transcriptExcerpt: text,
-          evidenceSegmentIds: [segment.id],
+          evidenceSegmentIds: [segmentId],
           timestampMs: now,
           confidence: match.confidence,
           urgency: "high",
           explanation: isQuestion
             ? `Direct question addressed to ${rawName}.`
-            : `Your name "${rawName}" was mentioned.`,
+            : `Your name "${rawName}" was called.`,
         };
 
         return { hasEvent: true, event };
@@ -128,24 +306,6 @@ export class EventDetector {
     }
 
     return { hasEvent: false };
-  }
-
-  private isAlreadyAlertedSentence(cleanSentence: string, now: number): boolean {
-    // Purge entries older than 25 seconds
-    for (const [hash, timestamp] of this.alertedSentenceHashes.entries()) {
-      if (now - timestamp > 25000) {
-        this.alertedSentenceHashes.delete(hash);
-      }
-    }
-
-    // Check if the current sentence is identical to or an in-progress prefix of a recent alert
-    for (const [hash] of this.alertedSentenceHashes.entries()) {
-      if (hash === cleanSentence) return true;
-      if (cleanSentence.startsWith(hash) && hash.length >= 8) return true;
-      if (hash.startsWith(cleanSentence) && cleanSentence.length >= 8) return true;
-    }
-
-    return false;
   }
 
   private recordAlertedSentence(cleanSentence: string, now: number) {
