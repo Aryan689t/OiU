@@ -1,0 +1,20 @@
+{
+  "name": "oiu-workspace",
+  "version": "0.1.0",
+  "private": true,
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "npm run -w @oiu/server dev",
+    "dev:server": "npm run -w @oiu/server dev",
+    "dev:extension": "npm run -w @oiu/extension dev",
+    "build": "npm run -w @oiu/shared build && npm run -w @oiu/extension build && npm run -w @oiu/server build",
+    "typecheck": "npm run -w @oiu/shared typecheck && npm run -w @oiu/extension typecheck && npm run -w @oiu/server typecheck",
+    "test": "npm run -w @oiu/shared test && npm run -w @oiu/server test"
+  },
+  "devDependencies": {
+    "@rollup/wasm-node": "^4.68.1",
+    "typescript": "^5.5.4"
+  }
+}

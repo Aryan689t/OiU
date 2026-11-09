@@ -1,0 +1,39 @@
+{
+  "manifest_version": 3,
+  "name": "OiU - Meeting Awareness Assistant",
+  "version": "0.1.0",
+  "description": "Alerts you when your name, registration number, or question is called in Google Meet.",
+  "permissions": [
+    "sidePanel",
+    "storage",
+    "tabs",
+    "activeTab",
+    "notifications",
+    "scripting"
+  ],
+  "host_permissions": [
+    "https://meet.google.com/*"
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "OiU Assistant"
+  },
+  "side_panel": {
+    "default_path": "sidepanel.html"
+  },
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://meet.google.com/*"
+      ],
+      "js": [
+        "content.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ]
+}
