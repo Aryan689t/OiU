@@ -70,9 +70,9 @@ export function isQuestionSentence(lower: string): boolean {
 
 /**
  * Splits text into individual sentences using punctuation (. ? ! ; \n)
- * and connective clause boundaries.
+ * and connective/keyword clause boundaries.
  */
-export function splitIntoSentences(text: string): string[] {
+export function splitIntoSentences(text: string, profile?: UserProfile): string[] {
   const trimmed = text.trim();
   if (!trimmed) return [];
 
@@ -82,19 +82,33 @@ export function splitIntoSentences(text: string): string[] {
     .map((s) => s.trim())
     .filter((s) => s.length > 0);
 
-  if (rawParts.length > 1) {
+  // 2. Helper to split run-on speech on user keywords or clause boundaries
+  const customKws = (profile?.keywords || [])
+    .map((k) => k.trim())
+    .filter((k) => k.length >= 2)
+    .map((k) => k.replace(/[\^$*+?.()|[\]{}\\]/g, "\\$&"));
+
+  const boundaryPatterns = [...customKws];
+  if (boundaryPatterns.length === 0) {
     return rawParts.filter((s) => s.length > 1);
   }
 
-  // 2. If no punctuation exists in text, check for strong clause/conjunction boundary
-  // e.g. "what is mitochondria tatha 117 aur ine Aryan 17"
-  const single = rawParts[0];
-  const subMatch = single.match(/(.*?[a-zA-Z0-9\?])\s+(?=(?:tatha|next roll|roll number \d+)\b)(.*)/i);
-  if (subMatch && subMatch[1] && subMatch[2] && subMatch[1].length > 8 && subMatch[2].length > 4) {
-    return [subMatch[1].trim(), subMatch[2].trim()];
+  const regex = new RegExp(`^(.*?)\\s+(?=(?:${boundaryPatterns.join("|")})\\b)(.*)$`, "i");
+
+  const splitKeywordsOrConjunctions = (clause: string): string[] => {
+    const match = clause.match(regex);
+    if (match && match[1] && match[2] && match[1].trim().length >= 2 && match[2].trim().length >= 2) {
+      return [match[1].trim(), ...splitKeywordsOrConjunctions(match[2].trim())];
+    }
+    return [clause];
+  };
+
+  const finalParts: string[] = [];
+  for (const part of rawParts) {
+    finalParts.push(...splitKeywordsOrConjunctions(part));
   }
 
-  return rawParts.filter((s) => s.length > 1);
+  return finalParts.filter((s) => s.length > 1);
 }
 
 /**
@@ -151,7 +165,7 @@ export function parseSentenceStream(
   timestampMs = Date.now(),
   speakerId = "Speaker"
 ): ParsedSentence[] {
-  const rawSentences = splitIntoSentences(text);
+  const rawSentences = splitIntoSentences(text, profile);
   if (rawSentences.length === 0) {
     return [];
   }
@@ -194,7 +208,8 @@ export function parseSentenceStream(
       for (const kw of profile.keywords) {
         if (!kw || kw.trim().length === 0) continue;
         const cleanKw = kw.trim().toLowerCase();
-        if (cleanKw.length >= 2 && lower.includes(cleanKw)) {
+        const kwRegex = new RegExp(`(^|[^a-z0-9])${cleanKw.replace(/[\^$*+?.()|[\]{}\\]/g, '\\$&')}([^a-z0-9]|$)`, "i");
+        if (cleanKw.length >= 2 && (lower.includes(cleanKw) || kwRegex.test(lower))) {
           hasUserMention = true;
           mentionedTarget = `Keyword "${kw.trim()}"`;
           break;

@@ -203,3 +203,30 @@ test("EventDetector does not trigger false alerts on subsequent speech when user
   assert.equal(res.turnAction, "NEW_ALERT");
   assert.equal(res.event?.transcriptExcerpt, "EMP-100 can you share your screen?");
 });
+
+test("EventDetector triggers alert when user-configured keyword 'Attendance' is spoken", () => {
+  const profileWithKeyword = {
+    displayName: "Aryan",
+    aliases: ["Ari", "Tathagat"],
+    identifiers: ["117"],
+    keywords: ["Attendance"],
+  };
+  const detector = new EventDetector(profileWithKeyword);
+
+  // 1. Keyword spoken alone
+  const res1 = detector.processSegment(createSegment("Please mark your attendance now."));
+  assert.equal(res1.hasEvent, true, "Should alert on keyword attendance");
+  assert.equal(res1.turnAction, "NEW_ALERT");
+  assert.match(res1.event!.explanation, /Attendance/i);
+
+  // 2. Keyword spoken after an ID call in the same meeting
+  const t2 = Date.now();
+  const res2 = detector.processSegment(createSegment("listening 117", t2));
+  assert.equal(res2.hasEvent, true);
+  assert.equal(res2.turnAction, "NEW_ALERT");
+
+  const res3 = detector.processSegment(createSegment("listening 117 attendance attendance", t2 + 1000));
+  assert.equal(res3.hasEvent, true, "Should trigger alert for attendance keyword even in continuous stream");
+  assert.equal(res3.turnAction, "NEW_ALERT");
+  assert.match(res3.event!.explanation, /Attendance/i);
+});

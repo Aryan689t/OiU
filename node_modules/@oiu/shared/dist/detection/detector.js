@@ -9,6 +9,7 @@ export class EventDetector {
     }
     updateProfile(profile) {
         this.profile = profile;
+        this.alertedSentenceHashes.clear();
     }
     resetHistory() {
         this.activeTurn = null;
@@ -73,16 +74,22 @@ export class EventDetector {
             const updatedMention = this.detectMention(updatedActiveSentence.text, segment.sessionId, segment.id, now);
             // If active turn already triggered an alert:
             if (this.activeTurn.hasAlert && this.activeTurn.alertEvent) {
-                // If the active sentence is a NEW, distinct question addressed to the user (e.g. "What is photosynthesis?"):
-                if (updatedDialogue.sentences.length > 1 &&
-                    updatedActiveSentence.relation === "disconnected" &&
+                const currentAlert = this.activeTurn.alertEvent;
+                const newEvent = updatedMention.event;
+                // Check if a new trigger occurred:
+                // 1. Different event type (e.g. from IDENTIFIER_MENTION to KEYWORD_MENTION or ATTENDANCE_CALL)
+                // 2. Different target explanation (e.g. from ID "117" to Keyword "Attendance")
+                // 3. New question addressed to user
+                const isDifferentType = Boolean(newEvent && newEvent.type !== currentAlert.type);
+                const isDifferentTarget = Boolean(newEvent && newEvent.explanation !== currentAlert.explanation);
+                const isNewQuestion = Boolean(updatedDialogue.sentences.length > 1 &&
                     updatedActiveSentence.isQuestion &&
-                    updatedMention.hasEvent &&
-                    updatedMention.event) {
-                    this.activeTurn.alertEvent = updatedMention.event;
+                    updatedActiveSentence.relation === "disconnected");
+                if (updatedMention.hasEvent && newEvent && (isDifferentType || isDifferentTarget || isNewQuestion)) {
+                    this.activeTurn.alertEvent = newEvent;
                     return {
                         hasEvent: true,
-                        event: updatedMention.event,
+                        event: newEvent,
                         turnAction: "NEW_ALERT",
                         turnId: this.activeTurn.id,
                         accumulatedText: updatedText,
@@ -324,9 +331,11 @@ export class EventDetector {
                 if (!kw || kw.trim().length === 0)
                     continue;
                 const cleanKw = kw.trim().toLowerCase();
-                if (cleanKw.length >= 2 && lowerText.includes(cleanKw)) {
+                const kwRegex = new RegExp(`(^|[^a-z0-9])${cleanKw.replace(/[\^$*+?.()|[\]{}\\]/g, "\\$&")}([^a-z0-9]|$)`, "i");
+                if (cleanKw.length >= 2 && (lowerText.includes(cleanKw) || kwRegex.test(lowerText))) {
                     const isQuestion = this.checkQuestionPattern(lowerText);
-                    const eventType = isQuestion ? "DIRECT_QUESTION" : "KEYWORD_MENTION";
+                    const isAttendance = cleanKw.includes("attendance") || cleanKw.includes("present") || this.checkAttendancePattern(lowerText);
+                    const eventType = isAttendance ? "ATTENDANCE_CALL" : isQuestion ? "DIRECT_QUESTION" : "KEYWORD_MENTION";
                     const event = {
                         id: `evt_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
                         sessionId,
@@ -334,11 +343,13 @@ export class EventDetector {
                         transcriptExcerpt: text,
                         evidenceSegmentIds: [segmentId],
                         timestampMs: now,
-                        confidence: 0.95,
-                        urgency: isQuestion ? "high" : "medium",
-                        explanation: isQuestion
-                            ? `Question regarding your keyword "${kw.trim()}".`
-                            : `Your monitored keyword "${kw.trim()}" was mentioned.`,
+                        confidence: 0.98,
+                        urgency: isQuestion || isAttendance ? "high" : "medium",
+                        explanation: isAttendance
+                            ? `Attendance call detected for keyword "${kw.trim()}".`
+                            : isQuestion
+                                ? `Question regarding your keyword "${kw.trim()}".`
+                                : `Your monitored keyword "${kw.trim()}" was mentioned.`,
                     };
                     return { hasEvent: true, event };
                 }

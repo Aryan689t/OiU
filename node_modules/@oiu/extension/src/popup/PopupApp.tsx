@@ -1,5 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { SessionInfo, UserProfile, DEFAULT_PROFILE, ExtensionMessage } from "@oiu/shared";
+import { THEME } from "../sidepanel/theme";
+import { OiULogoMark, MicrophoneIcon, StopSquareIcon, ExternalLinkIcon } from "../sidepanel/icons";
 
 export const PopupApp: React.FC = () => {
   const [session, setSession] = useState<SessionInfo>({
@@ -54,113 +56,155 @@ export const PopupApp: React.FC = () => {
   const isListening = session.state === "LISTENING";
   const isMeetReady = session.state === "SUPPORTED_TAB_READY";
 
-  const getStatusBadge = () => {
-    switch (session.state) {
-      case "LISTENING":
-        return { bg: "#dcfce7", text: "#15803d", dot: "#22c55e", label: "Listening" };
-      case "SUPPORTED_TAB_READY":
-        return { bg: "#dbeafe", text: "#1d4ed8", dot: "#3b82f6", label: "Meet Ready" };
-      case "ERROR":
-        return { bg: "#fee2e2", text: "#b91c1c", dot: "#ef4444", label: "Error" };
-      default:
-        return { bg: "#f3f4f6", text: "#6b7280", dot: "#9ca3af", label: "Inactive" };
-    }
-  };
-
-  const badge = getStatusBadge();
-
   return (
-    <div style={{ padding: 16, width: 300, boxSizing: "border-box" }}>
+    <div
+      style={{
+        padding: "16px",
+        width: "320px",
+        boxSizing: "border-box",
+        backgroundColor: THEME.colors.bg,
+        color: THEME.colors.textPrimary,
+        fontFamily: THEME.typography.fontFamily,
+      }}
+    >
       {/* Header */}
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
-        <h2 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: "#111827" }}>OiU Assistant</h2>
-        <span
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          marginBottom: "14px",
+          paddingBottom: "10px",
+          borderBottom: `1px solid ${THEME.colors.border}`,
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+          <OiULogoMark size={20} color={THEME.colors.textPrimary} />
+          <span style={{ fontSize: "16px", fontWeight: 800, letterSpacing: "-0.3px" }}>OiU</span>
+        </div>
+
+        <div
           style={{
-            fontSize: 11,
-            padding: "2px 8px",
-            borderRadius: 9999,
-            backgroundColor: badge.bg,
-            color: badge.text,
-            fontWeight: 600,
             display: "inline-flex",
             alignItems: "center",
-            gap: 4,
+            gap: "5px",
+            padding: "3px 8px",
+            borderRadius: THEME.radius.pill,
+            backgroundColor: isListening ? THEME.colors.greenMutedBg : THEME.colors.surface,
+            border: `1px solid ${isListening ? THEME.colors.greenBorder : THEME.colors.border}`,
+            fontSize: "11px",
+            fontWeight: 600,
+            color: isListening ? THEME.colors.accentGreen : THEME.colors.textSecondary,
           }}
         >
           <span
             style={{
-              width: 6,
-              height: 6,
+              width: "6px",
+              height: "6px",
               borderRadius: "50%",
-              backgroundColor: badge.dot,
+              backgroundColor: isListening
+                ? THEME.colors.accentGreen
+                : isMeetReady
+                ? THEME.colors.accentBlue
+                : THEME.colors.textMuted,
             }}
           />
-          {badge.label}
-        </span>
+          <span>{isListening ? "Listening" : isMeetReady ? "Meet Ready" : "Offline"}</span>
+        </div>
       </div>
 
-      <p style={{ fontSize: 12, color: "#4b5563", margin: "0 0 12px 0", lineHeight: 1.4 }}>
-        {isListening
-          ? `Monitoring audio for ${profile.displayName || "configured name"}...`
-          : isMeetReady
-          ? "Google Meet detected. Ready to listen."
-          : "Open or navigate to Google Meet to activate."}
-      </p>
+      {/* Target Profile Card */}
+      <div
+        style={{
+          backgroundColor: THEME.colors.bgSecondary,
+          border: `1px solid ${THEME.colors.border}`,
+          borderRadius: THEME.radius.md,
+          padding: "12px",
+          marginBottom: "14px",
+        }}
+      >
+        <div style={{ fontSize: "10.5px", fontWeight: 700, color: THEME.colors.textSecondary, textTransform: "uppercase", letterSpacing: "0.5px", marginBottom: "4px" }}>
+          Active Target
+        </div>
+        <div style={{ fontSize: "14px", fontWeight: 700, color: THEME.colors.textPrimary }}>
+          {profile.displayName || <span style={{ color: THEME.colors.textMuted }}>Not configured</span>}
+        </div>
+        {profile.identifiers.length > 0 && (
+          <div style={{ fontSize: "11px", color: THEME.colors.textSecondary, marginTop: "2px", fontFamily: THEME.typography.monoFamily }}>
+            ID: {profile.identifiers.join(", ")}
+          </div>
+        )}
+      </div>
 
-      {/* Action Button */}
-      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+      {/* Primary Actions */}
+      <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+        <button
+          onClick={openSidePanel}
+          style={{
+            width: "100%",
+            padding: "10px 14px",
+            backgroundColor: THEME.colors.surfaceHighlight,
+            border: `1px solid ${THEME.colors.borderActive}`,
+            borderRadius: THEME.radius.md,
+            color: THEME.colors.textPrimary,
+            fontSize: "12.5px",
+            fontWeight: 600,
+            cursor: "pointer",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: "6px",
+          }}
+        >
+          <span>Open Side Panel</span>
+          <ExternalLinkIcon size={12} color={THEME.colors.textPrimary} />
+        </button>
+
         {isListening ? (
           <button
             onClick={handleStopListening}
             style={{
               width: "100%",
-              padding: "8px 12px",
-              backgroundColor: "#dc2626",
-              color: "#ffffff",
-              border: "none",
-              borderRadius: 6,
+              padding: "10px 14px",
+              backgroundColor: THEME.colors.surface,
+              border: `1px solid ${THEME.colors.border}`,
+              borderRadius: THEME.radius.md,
+              color: THEME.colors.accentRed,
+              fontSize: "12.5px",
               fontWeight: 600,
-              fontSize: 13,
               cursor: "pointer",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: "6px",
             }}
           >
-            Stop Listening
+            <StopSquareIcon size={12} color={THEME.colors.accentRed} />
+            <span>Stop Listening</span>
           </button>
-        ) : isMeetReady ? (
+        ) : (
           <button
             onClick={handleStartListening}
             style={{
               width: "100%",
-              padding: "8px 12px",
-              backgroundColor: "#2563eb",
-              color: "#ffffff",
+              padding: "10px 14px",
+              backgroundColor: THEME.colors.accentGreen,
               border: "none",
-              borderRadius: 6,
-              fontWeight: 600,
-              fontSize: 13,
+              borderRadius: THEME.radius.md,
+              color: "#090A0B",
+              fontSize: "12.5px",
+              fontWeight: 700,
               cursor: "pointer",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: "6px",
             }}
           >
-            Start Listening
+            <MicrophoneIcon size={14} color="#090A0B" />
+            <span>Start Listening</span>
           </button>
-        ) : null}
-
-        <button
-          onClick={openSidePanel}
-          style={{
-            width: "100%",
-            padding: "8px 12px",
-            backgroundColor: isMeetReady || isListening ? "#f3f4f6" : "#2563eb",
-            color: isMeetReady || isListening ? "#374151" : "#ffffff",
-            border: "none",
-            borderRadius: 6,
-            fontWeight: 600,
-            fontSize: 13,
-            cursor: "pointer",
-          }}
-        >
-          Open Side Panel
-        </button>
+        )}
       </div>
     </div>
   );

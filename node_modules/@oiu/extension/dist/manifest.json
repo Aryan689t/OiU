@@ -13,7 +13,8 @@
   ],
   "host_permissions": [
     "https://meet.google.com/*",
-    "https://generativelanguage.googleapis.com/*"
+    "https://generativelanguage.googleapis.com/*",
+    "https://*.wikipedia.org/*"
   ],
   "action": {
     "default_popup": "popup.html",
