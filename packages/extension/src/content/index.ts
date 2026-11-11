@@ -1,12 +1,16 @@
 import { TranscriptSegment } from "@oiu/shared";
+import { pureAudioEngine, GROQ_API_KEY_STORAGE, LISTENING_MODE_STORAGE } from "../audio/audioEngine";
 
 console.log("[OiU Content Script] Loaded in Zero-Impact mode.");
 
-// Guard against multiple injections of content script in the same tab
-if ((window as any).__oiuContentScriptActive) {
-  console.log("[OiU Content Script] Already active in this tab, skipping duplicate initialization.");
-} else {
-  (window as any).__oiuContentScriptActive = true;
+// Teardown any previously running instance in this tab (e.g. across extension reload or reinjection)
+if (typeof (window as any).__oiuCleanup === "function") {
+  try {
+    (window as any).__oiuCleanup();
+  } catch (err) {
+    console.warn("[OiU Content Script] Previous instance cleanup error:", err);
+  }
+}
 
 // Report Google Meet tab detection to service worker
 chrome.runtime.sendMessage({
@@ -57,8 +61,36 @@ let monitoringStartTime = 0;
 let lastCaptionTime = 0;
 let lastAudioActivityTime = 0;
 let lastAutoBounceTime = 0;
+let userManuallyTurnedOffCaptions = false;
+
+// Listen for user clicks on the caption button to detect manual turn-off
+document.addEventListener(
+  "click",
+  (event) => {
+    const target = (event.target as HTMLElement)?.closest("button");
+    if (!target) return;
+    const label = (target.getAttribute("aria-label") || target.getAttribute("data-tooltip") || "").toLowerCase();
+    if (label.includes("caption")) {
+      const isCurrentlyOn = target.getAttribute("aria-pressed") === "true" || label.includes("turn off");
+      if (isCurrentlyOn) {
+        // User explicitly clicked to turn captions OFF. Respect their choice!
+        userManuallyTurnedOffCaptions = true;
+        console.log("[OiU] User manually clicked to turn OFF captions. Respecting user preference (auto-reopening disabled).");
+      } else {
+        // User explicitly clicked to turn captions ON.
+        userManuallyTurnedOffCaptions = false;
+        console.log("[OiU] User manually turned captions ON.");
+      }
+    }
+  },
+  true
+);
 
 function ensureMeetCaptionsOn() {
+  if (userManuallyTurnedOffCaptions) {
+    return;
+  }
+
   try {
     // 1. If captions are already on, do nothing
     const captionsOnBtn = document.querySelector(
@@ -98,6 +130,8 @@ function ensureMeetCaptionsOn() {
  * when captions have stalled, gone idle, or stopped updating.
  */
 function kickstartMeetCaptions() {
+  if (userManuallyTurnedOffCaptions) return;
+
   try {
     const captionsOnBtn = document.querySelector(
       'button[aria-label*="turn off captions" i], button[data-tooltip*="turn off captions" i], button[aria-pressed="true"][aria-label*="caption" i], button[jsname="r8qRAd"][aria-pressed="true"]'
@@ -107,6 +141,7 @@ function kickstartMeetCaptions() {
       console.log("[OiU Watchdog] Meet captions are ON but stalled. Bouncing caption connection to revive...");
       captionsOnBtn.click();
       setTimeout(() => {
+        if (!isMonitoringActive || userManuallyTurnedOffCaptions) return;
         const turnOnBtn = document.querySelector(
           'button[aria-label*="turn on captions" i], button[data-tooltip*="turn on captions" i], button[aria-pressed="false"][aria-label*="caption" i], button[jsname="r8qRAd"][aria-pressed="false"]'
         ) as HTMLButtonElement | null;
@@ -119,9 +154,6 @@ function kickstartMeetCaptions() {
       }, 250);
       return;
     }
-
-    // If captions were currently OFF, turn them ON
-    ensureMeetCaptionsOn();
   } catch (err) {
     console.warn("[OiU] Error in kickstartMeetCaptions:", err);
   }
@@ -129,13 +161,18 @@ function kickstartMeetCaptions() {
 
 function injectMainWorldVoiceEngine() {
   const existing = document.getElementById("oiu-voice-engine-script");
-  if (existing) return;
+  if (existing) {
+    try { existing.remove(); } catch(e) {}
+  }
+  window.postMessage({ source: "OIU_CONTENT", action: "STOP" }, "*");
 
   const script = document.createElement("script");
   script.id = "oiu-voice-engine-script";
   script.textContent = `
     (function() {
-      if (window.__oiuVoiceEngineActive) return;
+      if (window.__oiuVoiceEngineCleanup) {
+        try { window.__oiuVoiceEngineCleanup(); } catch(e) {}
+      }
       window.__oiuVoiceEngineActive = true;
       console.log("[OiU Main World] Voice & Audio Engine injected successfully.");
 
@@ -293,18 +330,27 @@ function injectMainWorldVoiceEngine() {
 
       startAudioMeter();
 
-      // 3. Stop listener
+      // 3. Cleanup & Stop handler
+      window.__oiuVoiceEngineCleanup = function() {
+        window.__oiuVoiceEngineActive = false;
+        if (recognizer) {
+          try { recognizer.stop(); } catch(err) {}
+          recognizer = null;
+        }
+        if (audioCtx) {
+          try { audioCtx.close(); } catch(err) {}
+          audioCtx = null;
+        }
+        if (animFrameId) {
+          cancelAnimationFrame(animFrameId);
+          animFrameId = null;
+        }
+      };
+
       window.addEventListener("message", function(e) {
         if (e.data && e.data.source === "OIU_CONTENT" && e.data.action === "STOP") {
-          window.__oiuVoiceEngineActive = false;
-          if (recognizer) {
-            try { recognizer.stop(); } catch(err) {}
-          }
-          if (audioCtx) {
-            try { audioCtx.close(); } catch(err) {}
-          }
-          if (animFrameId) {
-            cancelAnimationFrame(animFrameId);
+          if (window.__oiuVoiceEngineCleanup) {
+            window.__oiuVoiceEngineCleanup();
           }
         }
       });
@@ -322,7 +368,7 @@ function stopMainWorldVoiceEngine() {
 }
 
 // Forward messages from injected Main World voice engine
-window.addEventListener("message", (event) => {
+const mainWorldMessageListener = (event: MessageEvent) => {
   if (event.data?.source !== "OIU_MAIN_VOICE") return;
 
   if (event.data.type === "VOICE_TRANSCRIPT" && event.data.text) {
@@ -343,7 +389,8 @@ window.addEventListener("message", (event) => {
       },
     }).catch(() => {});
   }
-});
+};
+window.addEventListener("message", mainWorldMessageListener);
 
 function processCaptionText(rawText: string, speakerHint?: string) {
   if (!isMonitoringActive) return;
@@ -416,7 +463,7 @@ function processCaptionText(rawText: string, speakerHint?: string) {
 function baselineExistingCaptions() {
   try {
     const existing = document.querySelectorAll(
-      '[jsname="tgaKEf"], div.nMxLec, div.VbkSUe, div.iTTPOb, div.zT3Aid, div[jsname="YSvyfd"]'
+      '[jsname="tgaKEf"], span.V67aGc, div.nMxLec, div.VbkSUe, [jsname="r4nke"], div.iTTPOb, div.zT3Aid, div[jsname="YSvyfd"], div[jsname="YSfeed"], div[jscontroller="D1tHje"]'
     );
     const now = Date.now();
     existing.forEach((node) => {
@@ -443,7 +490,9 @@ function scanDOMForCaptions() {
 
   try {
     // 1. Scan live subtitle text spans (query inner leaf spans first to prevent parent/child double-read)
-    let subtitleNodes = document.querySelectorAll('[jsname="tgaKEf"]');
+    let subtitleNodes = document.querySelectorAll(
+      '[jsname="tgaKEf"], span.V67aGc, div.nMxLec, div.VbkSUe, [jsname="r4nke"]'
+    );
     if (subtitleNodes.length === 0) {
       subtitleNodes = document.querySelectorAll('div.nMxLec, div.VbkSUe');
     }
@@ -466,27 +515,62 @@ function scanDOMForCaptions() {
 
         const now = Date.now();
         const lastChangeTime = Number(el.dataset.oiuLastChangeTime || "0");
+        let sentenceStartTime = Number(el.dataset.oiuSentenceStartTime || "0");
         let sealedLength = Number(el.dataset.oiuSealedLength || "0");
         const prevText = el.dataset.oiuLastText || "";
 
-        // If more than 1800ms has elapsed since the last text update on this node,
-        // the previous phrase is completely finished, so seal it!
+        if (sentenceStartTime === 0 || sealedLength >= fullText.length) {
+          sentenceStartTime = now;
+          el.dataset.oiuSentenceStartTime = String(now);
+        }
+
+        // 1. THE 7-SECOND TIME LIMIT RULE (User Requirement):
+        // Any speech said after 7 seconds is counted as a brand NEW sentence.
+        // By 7 seconds, the user is expected to have seen/responded to the previous statement.
+        // We seal everything up to prevText so the previous sentence is archived,
+        // and new words start cleanly as a fresh sentence!
+        if (sentenceStartTime > 0 && now - sentenceStartTime >= 7000 && fullText.length > sealedLength) {
+          sealedLength = prevText.length;
+          el.dataset.oiuSealedLength = String(sealedLength);
+          sentenceStartTime = now;
+          el.dataset.oiuSentenceStartTime = String(now);
+        }
+
+        // 2. Pause boundary: If speaker stopped talking for > 1800ms, the previous phrase is finished
         if (lastChangeTime > 0 && now - lastChangeTime > 1800 && fullText.length > sealedLength) {
           sealedLength = prevText.length;
           el.dataset.oiuSealedLength = String(sealedLength);
+          sentenceStartTime = now;
+          el.dataset.oiuSentenceStartTime = String(now);
         }
 
-        // Punctuation sentence seal: If unsealed text contains a completed sentence ending with [.?!] followed by new words
+        // 3. Punctuation sentence seal: If unsealed text contains [.?!] followed by new words
         if (sealedLength < fullText.length) {
           const unsealed = fullText.slice(sealedLength);
           const punctMatch = unsealed.match(/^([\s\S]*?[.?!])\s+(\S[\s\S]*)$/);
           if (punctMatch && punctMatch[2] && punctMatch[2].length >= 2) {
             sealedLength += unsealed.indexOf(punctMatch[2]);
             el.dataset.oiuSealedLength = String(sealedLength);
+            sentenceStartTime = now;
+            el.dataset.oiuSentenceStartTime = String(now);
           }
         }
 
-        // Keep active speech window fresh: if text grows beyond 1 completed sentence or > 120 chars,
+        // 4. Consecutive question boundary seal:
+        // If unsealed text has an earlier question (at least 2 words) and a new question starter appears,
+        // seal before the new question so questions never get merged together!
+        if (sealedLength < fullText.length) {
+          const unsealed = fullText.slice(sealedLength);
+          const qBoundaryMatch = unsealed.match(/^(.{10,}?)\s+(?=(?:what is|what are|what was|what were|what ise|aur what is|aur what ise|and what is|why is|how is|can you)\b)/i);
+          if (qBoundaryMatch && qBoundaryMatch[1] && qBoundaryMatch[1].trim().length >= 8) {
+            sealedLength += qBoundaryMatch[1].length;
+            el.dataset.oiuSealedLength = String(sealedLength);
+            sentenceStartTime = now;
+            el.dataset.oiuSentenceStartTime = String(now);
+          }
+        }
+
+        // 5. Keep active speech window fresh: if text grows beyond 1 completed sentence or > 120 chars,
         // seal older sentences so past minutes of captions are never retained in currentSpeech
         if (fullText.length - sealedLength > 120) {
           const tail = fullText.slice(sealedLength);
@@ -500,11 +584,15 @@ function scanDOMForCaptions() {
             const cutIdx = punctIndices[punctIndices.length - 1] + 1;
             sealedLength += cutIdx;
             el.dataset.oiuSealedLength = String(sealedLength);
-          } else if (tail.length > 180) {
-            const safeCut = tail.lastIndexOf(" ", tail.length - 80);
-            if (safeCut > 40) {
+            sentenceStartTime = now;
+            el.dataset.oiuSentenceStartTime = String(now);
+          } else if (tail.length > 160) {
+            const safeCut = tail.lastIndexOf(" ", tail.length - 60);
+            if (safeCut > 30) {
               sealedLength += safeCut + 1;
               el.dataset.oiuSealedLength = String(sealedLength);
+              sentenceStartTime = now;
+              el.dataset.oiuSentenceStartTime = String(now);
             }
           }
         }
@@ -521,8 +609,8 @@ function scanDOMForCaptions() {
 
         if (currentSpeech.length < 2) return;
 
-        const parent = el.closest('div.nMxLec, div.iTTPOb, div[jsname="YSvyfd"]');
-        const speakerEl = parent?.querySelector(".NWkf3b, .jxFHg, .zs7LEd, .bFfZTd");
+        const parent = el.closest('div.nMxLec, div.iTTPOb, div[jsname="YSvyfd"], div[jsname="YSfeed"], div[jscontroller="D1tHje"]');
+        const speakerEl = parent?.querySelector(".NWkf3b, .jxFHg, .zs7LEd, .bFfZTd, [jsname=\"W24eoe\"], .Kj4Yde, .adEAYb");
         const speaker = speakerEl?.textContent?.trim() || "Speaker";
         processCaptionText(currentSpeech, speaker);
       });
@@ -530,7 +618,9 @@ function scanDOMForCaptions() {
 
     // 2. Fallback to outer caption container if dedicated nodes not yet rendered
     if (!capturedAny) {
-      const fallbackContainers = document.querySelectorAll('div.iTTPOb, div.zT3Aid, div[jsname="YSvyfd"]');
+      const fallbackContainers = document.querySelectorAll(
+        'div.iTTPOb, div.zT3Aid, div[jsname="YSvyfd"], div[jsname="YSfeed"], div[jscontroller="D1tHje"], div[aria-live="polite"], div[role="region"][aria-label*="caption" i]'
+      );
       fallbackContainers.forEach((container) => {
         if (container.closest('[aria-label*="chat" i], [jsname="xySENc"]')) return;
         const el = container as HTMLElement;
@@ -541,26 +631,56 @@ function scanDOMForCaptions() {
 
         const now = Date.now();
         const lastChangeTime = Number(el.dataset.oiuLastChangeTime || "0");
+        let sentenceStartTime = Number(el.dataset.oiuSentenceStartTime || "0");
         let sealedLength = Number(el.dataset.oiuSealedLength || "0");
         const prevText = el.dataset.oiuLastText || "";
 
+        if (sentenceStartTime === 0 || sealedLength >= fullText.length) {
+          sentenceStartTime = now;
+          el.dataset.oiuSentenceStartTime = String(now);
+        }
+
+        // 1. User's 7-Second Rule
+        if (sentenceStartTime > 0 && now - sentenceStartTime >= 7000 && fullText.length > sealedLength) {
+          sealedLength = prevText.length;
+          el.dataset.oiuSealedLength = String(sealedLength);
+          sentenceStartTime = now;
+          el.dataset.oiuSentenceStartTime = String(now);
+        }
+
+        // 2. Pause of > 1800ms
         if (lastChangeTime > 0 && now - lastChangeTime > 1800 && fullText.length > sealedLength) {
           sealedLength = prevText.length;
           el.dataset.oiuSealedLength = String(sealedLength);
+          sentenceStartTime = now;
+          el.dataset.oiuSentenceStartTime = String(now);
         }
 
-        // Punctuation sentence seal: If unsealed text contains a completed sentence ending with [.?!] followed by new words
+        // 3. Punctuation sentence seal
         if (sealedLength < fullText.length) {
           const unsealed = fullText.slice(sealedLength);
           const punctMatch = unsealed.match(/^([\s\S]*?[.?!])\s+(\S[\s\S]*)$/);
           if (punctMatch && punctMatch[2] && punctMatch[2].length >= 2) {
             sealedLength += unsealed.indexOf(punctMatch[2]);
             el.dataset.oiuSealedLength = String(sealedLength);
+            sentenceStartTime = now;
+            el.dataset.oiuSentenceStartTime = String(now);
           }
         }
 
-        // Keep active speech window fresh: if text grows beyond 1 completed sentence or > 120 chars,
-        // seal older sentences so past minutes of captions are never retained in currentSpeech
+        // 4. Consecutive question boundary seal
+        if (sealedLength < fullText.length) {
+          const unsealed = fullText.slice(sealedLength);
+          const qBoundaryMatch = unsealed.match(/^(.{10,}?)\s+(?=(?:what is|what are|what was|what were|what ise|aur what is|aur what ise|and what is|why is|how is|can you)\b)/i);
+          if (qBoundaryMatch && qBoundaryMatch[1] && qBoundaryMatch[1].trim().length >= 8) {
+            sealedLength += qBoundaryMatch[1].length;
+            el.dataset.oiuSealedLength = String(sealedLength);
+            sentenceStartTime = now;
+            el.dataset.oiuSentenceStartTime = String(now);
+          }
+        }
+
+        // 5. Keep active speech window fresh
         if (fullText.length - sealedLength > 120) {
           const tail = fullText.slice(sealedLength);
           const punctIndices: number[] = [];
@@ -573,11 +693,15 @@ function scanDOMForCaptions() {
             const cutIdx = punctIndices[punctIndices.length - 1] + 1;
             sealedLength += cutIdx;
             el.dataset.oiuSealedLength = String(sealedLength);
-          } else if (tail.length > 180) {
-            const safeCut = tail.lastIndexOf(" ", tail.length - 80);
-            if (safeCut > 40) {
+            sentenceStartTime = now;
+            el.dataset.oiuSentenceStartTime = String(now);
+          } else if (tail.length > 160) {
+            const safeCut = tail.lastIndexOf(" ", tail.length - 60);
+            if (safeCut > 30) {
               sealedLength += safeCut + 1;
               el.dataset.oiuSealedLength = String(sealedLength);
+              sentenceStartTime = now;
+              el.dataset.oiuSentenceStartTime = String(now);
             }
           }
         }
@@ -602,13 +726,11 @@ function scanDOMForCaptions() {
 let captionRepairIntervalId: any = null;
 
 function checkCaptionHealthAndWatchdog() {
-  if (!isMonitoringActive) return;
+  // If monitoring is stopped or user intentionally turned off Meet captions, do nothing!
+  if (!isMonitoringActive || userManuallyTurnedOffCaptions) return;
   const now = Date.now();
 
-  // 1. Ensure captions are ON if turned off
-  ensureMeetCaptionsOn();
-
-  // 2. Watchdog: If audio activity was detected in the meeting (someone spoke in the last 10s),
+  // Watchdog: If audio activity was detected in the meeting (someone spoke in the last 10s),
   // but captions have produced zero updates for > 15 seconds, and we haven't auto-bounced recently
   if (
     now - monitoringStartTime > 15000 &&
@@ -626,6 +748,7 @@ function checkCaptionHealthAndWatchdog() {
 function startMonitoring() {
   if (isMonitoringActive) return;
   isMonitoringActive = true;
+  userManuallyTurnedOffCaptions = false;
   const now = Date.now();
   monitoringStartTime = now;
   lastCaptionTime = now;
@@ -633,27 +756,66 @@ function startMonitoring() {
   lastAutoBounceTime = 0;
 
   cleanOldBadge();
-  ensureMeetCaptionsOn();
 
-  // Baseline existing captions first so static captions from 5 minutes ago are not alerted
-  baselineExistingCaptions();
+  // Read user configuration: listening mode ("audio_only" vs "dual") and Groq API key
+  chrome.storage.local.get([LISTENING_MODE_STORAGE, GROQ_API_KEY_STORAGE], (result) => {
+    const mode = result?.[LISTENING_MODE_STORAGE] || "audio_only";
+    const groqKey = (result?.[GROQ_API_KEY_STORAGE] || "").trim();
 
-  // Start Direct Voice Engine (listens directly to mic & audio in Meet Main World)
-  injectMainWorldVoiceEngine();
+    // 1. ALWAYS start Pure Audio Engine (Groq Whisper Large V3 + VAD + Web Speech fallback)
+    pureAudioEngine.start({
+      groqApiKey: groqKey,
+      onTranscript: (segment) => {
+        processCaptionText(segment.text, segment.speakerId || "Live Meeting Audio");
+      },
+      onAudioLevel: (level) => {
+        if (level > 0.04) {
+          lastAudioActivityTime = Date.now();
+        }
+        chrome.runtime.sendMessage({
+          type: "AUDIO_LEVEL",
+          payload: {
+            level: level,
+            packetsCaptured: 1,
+          },
+        }).catch(() => {});
+      },
+      onStatusChange: (status, message) => {
+        console.log(`[OiU Pure Audio Engine] Status: ${status} ${message ? `(${message})` : ""}`);
+      },
+    });
 
-  if (scanIntervalId) clearInterval(scanIntervalId);
-  // Ultra-light 600ms interval for DOM captions
-  scanIntervalId = setInterval(scanDOMForCaptions, 600);
+    if (mode === "audio_only") {
+      console.log("[OiU] Running in Pure Audio Mode (Groq Whisper Large V3). Google Meet captions remain completely untouched and OFF.");
+      return;
+    }
 
-  if (captionRepairIntervalId) clearInterval(captionRepairIntervalId);
-  // Watchdog check every 4s to ensure Meet captions remain ON and un-stalled
-  captionRepairIntervalId = setInterval(checkCaptionHealthAndWatchdog, 4000);
+    // 2. Dual mode: only if user explicitly selected "Dual Mode" in settings
+    ensureMeetCaptionsOn();
+    baselineExistingCaptions();
+    injectMainWorldVoiceEngine();
 
-  console.log("[OiU] Dual-Engine monitoring active (Voice Engine + Captions Engine + Stalled Caption Watchdog).");
+    if (scanIntervalId) clearInterval(scanIntervalId);
+    scanIntervalId = setInterval(scanDOMForCaptions, 600);
+
+    if (captionRepairIntervalId) clearInterval(captionRepairIntervalId);
+    captionRepairIntervalId = setInterval(checkCaptionHealthAndWatchdog, 5000);
+
+    console.log("[OiU] Dual mode active (Audio Engine + Captions companion).");
+  });
 }
 
 function stopMonitoring() {
   isMonitoringActive = false;
+  userManuallyTurnedOffCaptions = false;
+
+  // Stop pure audio engine cleanly
+  try {
+    pureAudioEngine.stop();
+  } catch (err) {
+    console.warn("[OiU] Error stopping pure audio engine:", err);
+  }
+
   if (scanIntervalId) {
     clearInterval(scanIntervalId);
     scanIntervalId = null;
@@ -668,7 +830,7 @@ function stopMonitoring() {
   console.log("[OiU] Monitoring stopped.");
 }
 
-chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+const messageListener = (message: any, _sender: any, sendResponse: (res?: any) => void) => {
   if (message?.type === "START_MEET_MONITORING") {
     startMonitoring();
     sendResponse({ success: true, monitoring: true });
@@ -686,5 +848,26 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     sendResponse({ success: true, monitoring: false });
     return false;
   }
+};
+
+chrome.runtime.onMessage.addListener(messageListener);
+
+// Register instance cleanup hook so reinjections or updates never leave dangling listeners or intervals
+(window as any).__oiuCleanup = () => {
+  stopMonitoring();
+  try {
+    chrome.runtime.onMessage.removeListener(messageListener);
+  } catch {}
+  try {
+    window.removeEventListener("message", mainWorldMessageListener);
+  } catch {}
+};
+
+// Auto-sync session state on startup: if background is already listening, activate immediately!
+chrome.runtime.sendMessage({ type: "GET_SESSION_STATE" }, (response) => {
+  if (chrome.runtime.lastError) return;
+  if (response?.session?.state === "LISTENING") {
+    console.log("[OiU Content Script] Background session is in LISTENING state, auto-starting monitoring.");
+    startMonitoring();
+  }
 });
-}

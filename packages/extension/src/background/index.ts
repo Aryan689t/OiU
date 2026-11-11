@@ -48,7 +48,7 @@ function broadcastStateChange() {
       profile: { ...userProfile },
     },
   };
-  chrome.runtime.sendMessage(message).catch(() => {});
+  chrome.runtime.sendMessage(message).catch(() => { });
 }
 
 async function findActiveOrAnyMeetTab(): Promise<chrome.tabs.Tab | undefined> {
@@ -58,7 +58,7 @@ async function findActiveOrAnyMeetTab(): Promise<chrome.tabs.Tab | undefined> {
     if (focusedActiveTab && isGoogleMeetUrl(focusedActiveTab.url)) {
       return focusedActiveTab;
     }
-  } catch {}
+  } catch { }
 
   // 2. Check active tab in current window
   try {
@@ -66,7 +66,7 @@ async function findActiveOrAnyMeetTab(): Promise<chrome.tabs.Tab | undefined> {
     if (currentActiveTab && isGoogleMeetUrl(currentActiveTab.url)) {
       return currentActiveTab;
     }
-  } catch {}
+  } catch { }
 
   // 3. Fallback: check ANY open tab with Google Meet URL
   try {
@@ -75,7 +75,7 @@ async function findActiveOrAnyMeetTab(): Promise<chrome.tabs.Tab | undefined> {
       const best = meetTabs.find((t) => t.active || t.audible);
       return best || meetTabs[0];
     }
-  } catch {}
+  } catch { }
 
   return undefined;
 }
@@ -112,7 +112,7 @@ async function checkTabAndUpdateState() {
 
 chrome.runtime.onInstalled.addListener(() => {
   console.log("[OiU Service Worker] Installed.");
-  chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: false }).catch(() => {});
+  chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: false }).catch(() => { });
   checkTabAndUpdateState();
 });
 
@@ -120,8 +120,14 @@ chrome.tabs.onActivated.addListener(() => {
   checkTabAndUpdateState();
 });
 
-chrome.tabs.onUpdated.addListener((_tabId, changeInfo) => {
+chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   if (changeInfo.status === "complete" || changeInfo.url) {
+    if (tab?.url && isGoogleMeetUrl(tab.url)) {
+      if (currentSession.state === "LISTENING") {
+        currentSession.tabId = tabId;
+        chrome.tabs.sendMessage(tabId, { type: "START_MEET_MONITORING" }).catch(() => { });
+      }
+    }
     checkTabAndUpdateState();
   }
 });
@@ -177,8 +183,13 @@ chrome.runtime.onMessage.addListener((message: any, _sender, sendResponse) => {
     }
 
     case "MEETING_TAB_DETECTED": {
+      const senderTabId = _sender.tab?.id;
+      if (senderTabId && currentSession.state === "LISTENING") {
+        currentSession.tabId = senderTabId;
+        chrome.tabs.sendMessage(senderTabId, { type: "START_MEET_MONITORING" }).catch(() => { });
+      }
       checkTabAndUpdateState().then(() => {
-        sendResponse({ acknowledged: true });
+        sendResponse({ acknowledged: true, isListening: currentSession.state === "LISTENING" });
       });
       return true;
     }
@@ -223,7 +234,7 @@ chrome.runtime.onMessage.addListener((message: any, _sender, sendResponse) => {
           broadcastStateChange();
           sendResponse({ success: true, session: currentSession });
 
-          // Send start message; if tab was open before extension install, inject on demand
+          // Send start message; if tab was open before extension install or update, inject on demand
           chrome.tabs.sendMessage(targetTabId, { type: "START_MEET_MONITORING" }, (resp) => {
             if (chrome.runtime.lastError || !resp?.success) {
               chrome.scripting
@@ -232,7 +243,9 @@ chrome.runtime.onMessage.addListener((message: any, _sender, sendResponse) => {
                   files: ["content.js"],
                 })
                 .then(() => {
-                  chrome.tabs.sendMessage(targetTabId, { type: "START_MEET_MONITORING" }).catch(() => {});
+                  setTimeout(() => {
+                    chrome.tabs.sendMessage(targetTabId, { type: "START_MEET_MONITORING" }).catch(() => { });
+                  }, 150);
                 })
                 .catch((err) => {
                   console.warn("[OiU] Content script on-demand injection note:", err);
@@ -254,9 +267,14 @@ chrome.runtime.onMessage.addListener((message: any, _sender, sendResponse) => {
     }
 
     case "STOP_SESSION_REQUEST": {
-      if (currentSession.tabId && currentSession.tabId > 0) {
-        chrome.tabs.sendMessage(currentSession.tabId, { type: "STOP_MEET_MONITORING" }).catch(() => {});
-      }
+      chrome.tabs.query({ url: "*://meet.google.com/*" }).then((tabs) => {
+        tabs.forEach((tab) => {
+          if (tab.id) {
+            chrome.tabs.sendMessage(tab.id, { type: "STOP_MEET_MONITORING" }).catch(() => { });
+          }
+        });
+      }).catch(() => { });
+
       currentSession = {
         sessionId: "",
         tabId: -1,
@@ -270,6 +288,14 @@ chrome.runtime.onMessage.addListener((message: any, _sender, sendResponse) => {
     }
 
     case "RESET_SESSION_REQUEST": {
+      chrome.tabs.query({ url: "*://meet.google.com/*" }).then((tabs) => {
+        tabs.forEach((tab) => {
+          if (tab.id) {
+            chrome.tabs.sendMessage(tab.id, { type: "STOP_MEET_MONITORING" }).catch(() => { });
+          }
+        });
+      }).catch(() => { });
+
       currentSession = {
         sessionId: "",
         tabId: -1,

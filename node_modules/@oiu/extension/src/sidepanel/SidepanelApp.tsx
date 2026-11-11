@@ -43,6 +43,9 @@ const PROFILE_STORAGE_KEY = "oiu_user_profile";
 const ALERTED_HASHES_STORAGE_KEY = "oiu_alerted_hashes";
 const GEMINI_API_KEY_STORAGE = "oiu_gemini_api_key";
 
+// Feature flag: Deactivate AI question answering for now (focusing 100% on the core meeting alert engine)
+const ENABLE_AI_ANSWER_ENGINE = false;
+
 let currentAudioCtx: AudioContext | null = null;
 
 function stopAlertSound() {
@@ -155,6 +158,7 @@ export const SidepanelApp: React.FC = () => {
   sessionRef.current = session;
 
   const detectorRef = useRef<EventDetector>(new EventDetector(profile));
+  const aiDebounceTimerRef = useRef<any>(null);
 
   useEffect(() => {
     const interval = setInterval(() => {
@@ -169,6 +173,27 @@ export const SidepanelApp: React.FC = () => {
       setTimeout(() => setCopiedSuggestionIdx(null), 2000);
     }).catch(() => {});
   };
+
+  const scheduleAiGeneration = useCallback((event: MeetingEvent) => {
+    if (!ENABLE_AI_ANSWER_ENGINE) return;
+
+    if (aiDebounceTimerRef.current) {
+      clearTimeout(aiDebounceTimerRef.current);
+    }
+
+    setIsGeneratingAi(true);
+    aiDebounceTimerRef.current = setTimeout(() => {
+      const recentCtx = transcriptsRef.current.slice(-5).map((t) => `${t.speakerId || "Speaker"}: ${t.text}`).join("\n");
+      generateSmartResponses(event, profileRef.current, geminiApiKeyRef.current, recentCtx)
+        .then((responses) => {
+          setAiResponsesMap((prev) => ({ ...prev, [event.id]: responses }));
+        })
+        .catch(() => {})
+        .finally(() => {
+          setIsGeneratingAi(false);
+        });
+    }, 850);
+  }, []);
 
   const triggerAlert = useCallback((event: MeetingEvent) => {
     console.log("[OiU Alert Triggered]", event);
@@ -187,17 +212,8 @@ export const SidepanelApp: React.FC = () => {
       chrome.storage.local.set({ [ALERTED_HASHES_STORAGE_KEY]: exported });
     }
 
-    // Automatically generate intelligent AI responses (Gemini Flash or grounded topic fallback)
-    setIsGeneratingAi(true);
-    const recentCtx = transcriptsRef.current.slice(-6).map((t) => `${t.speakerId || "Speaker"}: ${t.text}`).join("\n");
-    generateSmartResponses(event, profileRef.current, geminiApiKeyRef.current, recentCtx)
-      .then((responses) => {
-        setAiResponsesMap((prev) => ({ ...prev, [event.id]: responses }));
-      })
-      .catch(() => {})
-      .finally(() => {
-        setIsGeneratingAi(false);
-      });
+    // Debounced AI generation (protects from burning the 15 RPM rate limit during streaming)
+    scheduleAiGeneration(event);
 
     try {
       if (chrome.notifications) {
@@ -212,7 +228,7 @@ export const SidepanelApp: React.FC = () => {
     } catch (e) {
       console.warn("Notification error:", e);
     }
-  }, []);
+  }, [scheduleAiGeneration]);
 
   const updateActiveAlert = useCallback((event: MeetingEvent) => {
     setActiveAlert((prev) => {
@@ -241,25 +257,18 @@ export const SidepanelApp: React.FC = () => {
     const updatedResponses = getInstantSmartResponses(event, profileRef.current);
     setAiResponsesMap((prev) => ({ ...prev, [event.id]: updatedResponses }));
 
-    // If Gemini API Key is active, refine AI response for full updated question
-    if (geminiApiKeyRef.current) {
-      const recentCtx = transcriptsRef.current.slice(-4).map((t) => `${t.speakerId || "Speaker"}: ${t.text}`).join("\n");
-      generateSmartResponses(event, profileRef.current, geminiApiKeyRef.current, recentCtx)
-        .then((responses) => {
-          setAiResponsesMap((prev) => ({ ...prev, [event.id]: responses }));
-        })
-        .catch(() => {});
-    }
-  }, []);
+    // Debounced AI generation on updated excerpt
+    scheduleAiGeneration(event);
+  }, [scheduleAiGeneration]);
 
-  // Auto-finalize speech turns when speaker pauses > 2.2 seconds
+  // Auto-finalize speech turns when speaker pauses > 2.0 seconds OR when utterance reaches 7 seconds
   useEffect(() => {
     const timer = setInterval(() => {
       const now = Date.now();
       setTranscripts((prev) => {
         let changed = false;
         const updated = prev.map((seg) => {
-          if (!seg.isFinal && now - seg.endMs > 2200) {
+          if (!seg.isFinal && (now - seg.endMs > 2000 || now - (seg.startMs || now) >= 7000)) {
             changed = true;
             return { ...seg, isFinal: true };
           }
@@ -267,7 +276,7 @@ export const SidepanelApp: React.FC = () => {
         });
         return changed ? updated : prev;
       });
-    }, 800);
+    }, 600);
     return () => clearInterval(timer);
   }, []);
 
@@ -336,7 +345,7 @@ export const SidepanelApp: React.FC = () => {
         setLastSpeechTime(now);
         setIsVoiceActive(true);
 
-        // Update transcripts with Turn-based streaming, deduplication, and distinct turns
+        // Update transcripts with Turn-based streaming, deduplication, and distinct turns (7-second rule)
         setTranscripts((prev) => {
           const incomingText = (result.accumulatedText || msg.segment.text || "").trim();
           if (!incomingText) return prev;
@@ -346,37 +355,37 @@ export const SidepanelApp: React.FC = () => {
             const last = { ...copy[copy.length - 1] };
             const cleanNew = incomingText.toLowerCase().replace(/[^a-z0-9]/g, "");
             const cleanLast = last.text.toLowerCase().replace(/[^a-z0-9]/g, "");
+            const timeSinceStart = now - (last.startMs || now);
 
-            // 1. Exact or near duplicate check (drop or update in place within 3.5s)
-            if (
-              cleanNew === cleanLast ||
-              (cleanLast.length > 0 &&
-                Math.abs(now - last.endMs) < 3500 &&
-                (cleanNew.startsWith(cleanLast) || cleanLast.startsWith(cleanNew)))
-            ) {
-              last.text = incomingText.length >= last.text.length ? incomingText : last.text;
+            // 1. Exact duplicate check (drop or update timestamp in place within 7s)
+            if (cleanNew === cleanLast) {
               last.endMs = now;
+              copy[copy.length - 1] = last;
+              return copy;
+            }
+
+            // 2. Normal turn continuation ONLY IF within the 7-second time limit!
+            // If more than 7 seconds have elapsed, the previous statement is finalized and moved to history!
+            if (
+              result.isContinuation &&
+              timeSinceStart < 7000 &&
+              (last.id === result.turnId || Math.abs(now - last.endMs) < 2200)
+            ) {
+              last.text = incomingText;
+              last.endMs = now;
+              last.isFinal = false;
               if (last.speakerId === "Speaker" || last.speakerId === "Live Voice") {
                 last.speakerId = result.speakerId || last.speakerId;
               }
               copy[copy.length - 1] = last;
               return copy;
             }
-
-            // 2. Normal turn continuation
-            if (result.isContinuation && (last.id === result.turnId || Math.abs(now - last.endMs) < 3000)) {
-              last.text = incomingText;
-              last.endMs = now;
-              last.isFinal = false;
-              copy[copy.length - 1] = last;
-              return copy;
-            }
           }
 
-          // 3. Genuine New Turn
+          // 3. Genuine New Turn / Sentence (after 7 seconds, new question, or new turn)
           const copy = prev.map((t) => ({ ...t, isFinal: true }));
           const newSeg: TranscriptSegment = {
-            id: result.turnId,
+            id: result.turnId || `turn_${now}`,
             sessionId: msg.segment.sessionId || "meet_call",
             text: incomingText,
             speakerId: result.speakerId || msg.segment.speakerId || "Speaker",

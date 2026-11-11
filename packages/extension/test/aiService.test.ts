@@ -109,6 +109,54 @@ test("getInstantSmartResponses returns accurate answer for biology questions (ph
   assert.match(res2[0].text, /powerhouses of the cell/i);
 });
 
+test("getInstantSmartResponses handles speech-to-text garble 'What ise D use off geometry box?'", () => {
+  const event: MeetingEvent = {
+    id: "evt_geom",
+    sessionId: "s_1",
+    timestampMs: Date.now(),
+    type: "DIRECT_QUESTION",
+    confidence: 1.0,
+    transcriptExcerpt: "What ise D use off geometry box?",
+  };
+
+  const responses = getInstantSmartResponses(event, profile);
+  assert.equal(responses.length, 3);
+  assert.match(responses[0].text, /mathematical instruments|ruler, compass, protractor/i);
+  assert.doesNotMatch(responses[0].text, /regarding What ise d use/i);
+});
+
+test("getInstantSmartResponses handles speech-to-text garble 'What ise D source off vitamin Di?'", () => {
+  const event: MeetingEvent = {
+    id: "evt_vit",
+    sessionId: "s_1",
+    timestampMs: Date.now(),
+    type: "DIRECT_QUESTION",
+    confidence: 1.0,
+    transcriptExcerpt: "What ise D source off vitamin Di?",
+  };
+
+  const responses = getInstantSmartResponses(event, profile);
+  assert.equal(responses.length, 3);
+  assert.match(responses[0].text, /sunlight|fatty fish|egg yolks/i);
+  assert.doesNotMatch(responses[0].text, /regarding What ise d source/i);
+});
+
+test("getInstantSmartResponses handles speech-to-text garble 'What ise D hight off Mount Everest?'", () => {
+  const event: MeetingEvent = {
+    id: "evt_everest",
+    sessionId: "s_1",
+    timestampMs: Date.now(),
+    type: "DIRECT_QUESTION",
+    confidence: 1.0,
+    transcriptExcerpt: "What ise D hight off Mount Everest?",
+  };
+
+  const responses = getInstantSmartResponses(event, profile);
+  assert.equal(responses.length, 3);
+  assert.match(responses[0].text, /8,848|highest mountain on earth/i);
+  assert.doesNotMatch(responses[0].text, /regarding What ise d hight/i);
+});
+
 test("getInstantSmartResponses fallback for unknown questions produces natural spoken response without robotic filler", () => {
   const eventUnknown: MeetingEvent = {
     id: "evt_8",
@@ -121,5 +169,5 @@ test("getInstantSmartResponses fallback for unknown questions produces natural s
   const res = getInstantSmartResponses(eventUnknown, profile);
   assert.equal(res.length, 3);
   assert.doesNotMatch(res[0].text, /essentially centered on its foundational definition/i);
-  assert.match(res[0].text, /following along regarding/i);
+  assert.match(res[0].text, /following along/i);
 });

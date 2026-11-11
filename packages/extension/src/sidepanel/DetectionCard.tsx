@@ -18,6 +18,9 @@ import {
   extractCoreCalloutOrQuestion,
 } from "../services/aiService";
 
+// Feature flag: Question answering / suggested responses deactivated to focus 100% on the alert engine
+const ENABLE_SUGGESTED_RESPONSES = false;
+
 interface DetectionCardProps {
   activeAlert: MeetingEvent | null;
   alertsHistory: MeetingEvent[];
@@ -375,235 +378,237 @@ export const DetectionCard: React.FC<DetectionCardProps> = ({
         </div>
       )}
 
-      {/* Suggested Response (Single Full-Visibility Card with Room to Read) */}
-      <div style={{ marginTop: "14px" }}>
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            marginBottom: "8px",
-          }}
-        >
-          {/* Tone / Style Switcher Pills (Direct / Professional / Clarification) */}
-          <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-            {suggestions.map((sug, i) => {
-              const isSelected = selectedToneIndex === i;
-              return (
-                <button
-                  key={i}
-                  onClick={() => setSelectedToneIndex(i)}
-                  style={{
-                    padding: "4px 9px",
-                    borderRadius: THEME.radius.xs,
-                    border: `1px solid ${isSelected ? THEME.colors.greenBorder : THEME.colors.borderSubtle}`,
-                    backgroundColor: isSelected ? THEME.colors.greenMutedBg : THEME.colors.surface,
-                    color: isSelected ? THEME.colors.accentGreen : THEME.colors.textSecondary,
-                    fontSize: "11px",
-                    fontWeight: isSelected ? 600 : 500,
-                    cursor: "pointer",
-                    display: "flex",
-                    alignItems: "center",
-                    gap: "4px",
-                    transition: "all 0.15s ease",
-                  }}
-                >
-                  {sug.label === "Direct" && <LightningIcon size={12} color={isSelected ? THEME.colors.accentGreen : THEME.colors.textSecondary} />}
-                  {sug.label === "Professional" && <BriefcaseIcon size={12} color={isSelected ? THEME.colors.accentGreen : THEME.colors.textSecondary} />}
-                  {sug.label === "Clarification" && <QuestionCircleIcon size={12} color={isSelected ? THEME.colors.accentGreen : THEME.colors.textSecondary} />}
-                  <span>{sug.label}</span>
-                </button>
-              );
-            })}
-          </div>
-
-          {/* Regenerate AI button */}
-          {geminiApiKey && (
-            <button
-              onClick={() => onRegenerateAi(displayAlert)}
-              disabled={isGeneratingAi}
-              style={{
-                background: "none",
-                border: "none",
-                color: THEME.colors.accentGreen,
-                fontSize: "11px",
-                fontWeight: 600,
-                cursor: "pointer",
-                padding: "2px 4px",
-                display: "flex",
-                alignItems: "center",
-                gap: "3px",
-              }}
-            >
-              <LightningIcon size={11} color={THEME.colors.accentGreen} />
-              <span>{isGeneratingAi ? "Generating..." : "Regenerate"}</span>
-            </button>
-          )}
-        </div>
-
-        {/* Real-time AI Generation status pill */}
-        {isGeneratingAi && (
+      {/* Suggested Response (Deactivated as per user request - focusing 100% on the core alert engine) */}
+      {ENABLE_SUGGESTED_RESPONSES && (
+        <div style={{ marginTop: "14px" }}>
           <div
             style={{
-              marginBottom: "8px",
-              padding: "4px 8px",
-              backgroundColor: THEME.colors.greenMutedBg,
-              borderRadius: THEME.radius.sm,
-              border: `1px solid ${THEME.colors.greenBorder}`,
-              fontSize: "10.5px",
-              color: THEME.colors.accentGreen,
-              display: "flex",
-              alignItems: "center",
-              gap: "6px",
-            }}
-          >
-            <span
-              style={{
-                display: "inline-block",
-                width: "6px",
-                height: "6px",
-                borderRadius: "50%",
-                backgroundColor: THEME.colors.accentGreen,
-                boxShadow: `0 0 6px ${THEME.colors.accentGreen}`,
-              }}
-            />
-            <span>Thinking... Querying Google Gemini AI for this new question</span>
-          </div>
-        )}
-
-        {/* The Full Answer Card - No Truncation, Generous Room to Read */}
-        {(() => {
-          const currentSug = suggestions[selectedToneIndex] || suggestions[0];
-          if (!currentSug) return null;
-          const isCopied = copiedSuggestionIdx === selectedToneIndex;
-
-          return (
-            <div
-              style={{
-                backgroundColor: THEME.colors.surface,
-                border: `1px solid ${THEME.colors.borderSubtle}`,
-                borderRadius: THEME.radius.md,
-                padding: "12px 14px",
-              }}
-            >
-              <div
-                style={{
-                  fontSize: "13px",
-                  lineHeight: "1.55",
-                  color: THEME.colors.textPrimary,
-                  fontWeight: 400,
-                  whiteSpace: "normal",
-                  wordBreak: "break-word",
-                  marginBottom: "12px",
-                }}
-              >
-                "{currentSug.text}"
-              </div>
-
-              <div
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "space-between",
-                  paddingTop: "8px",
-                  borderTop: `1px solid ${THEME.colors.borderSubtle}`,
-                }}
-              >
-                <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-                  <span style={{ fontSize: "10.5px", color: THEME.colors.textMuted }}>
-                    {currentSug.label} response
-                  </span>
-                  {currentSug.source === "gemini" && (
-                    <span
-                      style={{
-                        fontSize: "9.5px",
-                        fontWeight: 600,
-                        color: THEME.colors.accentGreen,
-                        backgroundColor: THEME.colors.greenMutedBg,
-                        border: `1px solid ${THEME.colors.greenBorder}`,
-                        borderRadius: "3px",
-                        padding: "1px 5px",
-                      }}
-                    >
-                      ✨ Gemini AI
-                    </span>
-                  )}
-                  {currentSug.source === "wikipedia" && (
-                    <span
-                      style={{
-                        fontSize: "9.5px",
-                        fontWeight: 500,
-                        color: "#93C5FD",
-                        backgroundColor: THEME.colors.blueMutedBg,
-                        border: "1px solid #1D3B5C",
-                        borderRadius: "3px",
-                        padding: "1px 5px",
-                      }}
-                    >
-                      📖 Encyclopedia
-                    </span>
-                  )}
-                </div>
-
-                <button
-                  onClick={() => onCopySuggestion(currentSug.text, selectedToneIndex)}
-                  title="Copy full answer to clipboard"
-                  style={{
-                    display: "inline-flex",
-                    alignItems: "center",
-                    gap: "6px",
-                    padding: "6px 12px",
-                    backgroundColor: isCopied ? THEME.colors.greenMutedBg : THEME.colors.surfaceHighlight,
-                    border: `1px solid ${isCopied ? THEME.colors.greenBorder : THEME.colors.borderActive}`,
-                    borderRadius: THEME.radius.sm,
-                    color: isCopied ? THEME.colors.accentGreen : THEME.colors.textPrimary,
-                    fontSize: "11.5px",
-                    fontWeight: 600,
-                    cursor: "pointer",
-                    transition: "all 0.15s ease",
-                  }}
-                >
-                  {isCopied ? (
-                    <>
-                      <CheckIcon size={13} color={THEME.colors.accentGreen} />
-                      <span>Copied!</span>
-                    </>
-                  ) : (
-                    <>
-                      <CopyIcon size={13} color={THEME.colors.textSecondary} />
-                      <span>Copy Answer</span>
-                    </>
-                  )}
-                </button>
-              </div>
-            </div>
-          );
-        })()}
-
-        {/* Missing Gemini Key prompt */}
-        {!geminiApiKey && isQuestion && (
-          <button
-            onClick={onOpenSettings}
-            style={{
-              width: "100%",
-              marginTop: "8px",
-              padding: "7px 10px",
-              backgroundColor: THEME.colors.surface,
-              border: `1px solid ${THEME.colors.border}`,
-              borderRadius: THEME.radius.sm,
-              color: THEME.colors.textSecondary,
-              fontSize: "10.5px",
-              cursor: "pointer",
               display: "flex",
               alignItems: "center",
               justifyContent: "space-between",
+              marginBottom: "8px",
             }}
           >
-            <span>💡 Add free Gemini API Key for deep factual answers</span>
-            <span style={{ color: THEME.colors.accentGreen, fontWeight: 600 }}>Add Key →</span>
-          </button>
-        )}
-      </div>
+            {/* Tone / Style Switcher Pills (Direct / Professional / Clarification) */}
+            <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+              {suggestions.map((sug, i) => {
+                const isSelected = selectedToneIndex === i;
+                return (
+                  <button
+                    key={i}
+                    onClick={() => setSelectedToneIndex(i)}
+                    style={{
+                      padding: "4px 9px",
+                      borderRadius: THEME.radius.xs,
+                      border: `1px solid ${isSelected ? THEME.colors.greenBorder : THEME.colors.borderSubtle}`,
+                      backgroundColor: isSelected ? THEME.colors.greenMutedBg : THEME.colors.surface,
+                      color: isSelected ? THEME.colors.accentGreen : THEME.colors.textSecondary,
+                      fontSize: "11px",
+                      fontWeight: isSelected ? 600 : 500,
+                      cursor: "pointer",
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "4px",
+                      transition: "all 0.15s ease",
+                    }}
+                  >
+                    {sug.label === "Direct" && <LightningIcon size={12} color={isSelected ? THEME.colors.accentGreen : THEME.colors.textSecondary} />}
+                    {sug.label === "Professional" && <BriefcaseIcon size={12} color={isSelected ? THEME.colors.accentGreen : THEME.colors.textSecondary} />}
+                    {sug.label === "Clarification" && <QuestionCircleIcon size={12} color={isSelected ? THEME.colors.accentGreen : THEME.colors.textSecondary} />}
+                    <span>{sug.label}</span>
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Regenerate AI button */}
+            {geminiApiKey && (
+              <button
+                onClick={() => onRegenerateAi(displayAlert)}
+                disabled={isGeneratingAi}
+                style={{
+                  background: "none",
+                  border: "none",
+                  color: THEME.colors.accentGreen,
+                  fontSize: "11px",
+                  fontWeight: 600,
+                  cursor: "pointer",
+                  padding: "2px 4px",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "3px",
+                }}
+              >
+                <LightningIcon size={11} color={THEME.colors.accentGreen} />
+                <span>{isGeneratingAi ? "Generating..." : "Regenerate"}</span>
+              </button>
+            )}
+          </div>
+
+          {/* Real-time AI Generation status pill */}
+          {isGeneratingAi && (
+            <div
+              style={{
+                marginBottom: "8px",
+                padding: "4px 8px",
+                backgroundColor: THEME.colors.greenMutedBg,
+                borderRadius: THEME.radius.sm,
+                border: `1px solid ${THEME.colors.greenBorder}`,
+                fontSize: "10.5px",
+                color: THEME.colors.accentGreen,
+                display: "flex",
+                alignItems: "center",
+                gap: "6px",
+              }}
+            >
+              <span
+                style={{
+                  display: "inline-block",
+                  width: "6px",
+                  height: "6px",
+                  borderRadius: "50%",
+                  backgroundColor: THEME.colors.accentGreen,
+                  boxShadow: `0 0 6px ${THEME.colors.accentGreen}`,
+                }}
+              />
+              <span>Thinking... Querying Google Gemini AI for this new question</span>
+            </div>
+          )}
+
+          {/* The Full Answer Card - No Truncation, Generous Room to Read */}
+          {(() => {
+            const currentSug = suggestions[selectedToneIndex] || suggestions[0];
+            if (!currentSug) return null;
+            const isCopied = copiedSuggestionIdx === selectedToneIndex;
+
+            return (
+              <div
+                style={{
+                  backgroundColor: THEME.colors.surface,
+                  border: `1px solid ${THEME.colors.borderSubtle}`,
+                  borderRadius: THEME.radius.md,
+                  padding: "12px 14px",
+                }}
+              >
+                <div
+                  style={{
+                    fontSize: "13px",
+                    lineHeight: "1.55",
+                    color: THEME.colors.textPrimary,
+                    fontWeight: 400,
+                    whiteSpace: "normal",
+                    wordBreak: "break-word",
+                    marginBottom: "12px",
+                  }}
+                >
+                  "{currentSug.text}"
+                </div>
+
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    paddingTop: "8px",
+                    borderTop: `1px solid ${THEME.colors.borderSubtle}`,
+                  }}
+                >
+                  <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                    <span style={{ fontSize: "10.5px", color: THEME.colors.textMuted }}>
+                      {currentSug.label} response
+                    </span>
+                    {currentSug.source === "gemini" && (
+                      <span
+                        style={{
+                          fontSize: "9.5px",
+                          fontWeight: 600,
+                          color: THEME.colors.accentGreen,
+                          backgroundColor: THEME.colors.greenMutedBg,
+                          border: `1px solid ${THEME.colors.greenBorder}`,
+                          borderRadius: "3px",
+                          padding: "1px 5px",
+                        }}
+                      >
+                        ✨ Gemini AI
+                      </span>
+                    )}
+                    {currentSug.source === "wikipedia" && (
+                      <span
+                        style={{
+                          fontSize: "9.5px",
+                          fontWeight: 500,
+                          color: "#93C5FD",
+                          backgroundColor: THEME.colors.blueMutedBg,
+                          border: "1px solid #1D3B5C",
+                          borderRadius: "3px",
+                          padding: "1px 5px",
+                        }}
+                      >
+                        📖 Encyclopedia
+                      </span>
+                    )}
+                  </div>
+
+                  <button
+                    onClick={() => onCopySuggestion(currentSug.text, selectedToneIndex)}
+                    title="Copy full answer to clipboard"
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: "6px",
+                      padding: "6px 12px",
+                      backgroundColor: isCopied ? THEME.colors.greenMutedBg : THEME.colors.surfaceHighlight,
+                      border: `1px solid ${isCopied ? THEME.colors.greenBorder : THEME.colors.borderActive}`,
+                      borderRadius: THEME.radius.sm,
+                      color: isCopied ? THEME.colors.accentGreen : THEME.colors.textPrimary,
+                      fontSize: "11.5px",
+                      fontWeight: 600,
+                      cursor: "pointer",
+                      transition: "all 0.15s ease",
+                    }}
+                  >
+                    {isCopied ? (
+                      <>
+                        <CheckIcon size={13} color={THEME.colors.accentGreen} />
+                        <span>Copied!</span>
+                      </>
+                    ) : (
+                      <>
+                        <CopyIcon size={13} color={THEME.colors.textSecondary} />
+                        <span>Copy Answer</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              </div>
+            );
+          })()}
+
+          {/* Missing Gemini Key prompt */}
+          {!geminiApiKey && isQuestion && (
+            <button
+              onClick={onOpenSettings}
+              style={{
+                width: "100%",
+                marginTop: "8px",
+                padding: "7px 10px",
+                backgroundColor: THEME.colors.surface,
+                border: `1px solid ${THEME.colors.border}`,
+                borderRadius: THEME.radius.sm,
+                color: THEME.colors.textSecondary,
+                fontSize: "10.5px",
+                cursor: "pointer",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+              }}
+            >
+              <span>💡 Add free Gemini API Key for deep factual answers</span>
+              <span style={{ color: THEME.colors.accentGreen, fontWeight: 600 }}>Add Key →</span>
+            </button>
+          )}
+        </div>
+      )}
 
       {/* Prior Speech Context Drawer ("What You Missed") */}
       {priorContextTranscripts.length > 0 && (

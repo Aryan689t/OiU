@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { UserProfile, formatCommaSeparatedList, parseCommaSeparatedList, validateProfile } from "@oiu/shared";
 import { THEME } from "./theme";
 import {
@@ -10,8 +10,17 @@ import {
   ExternalLinkIcon,
   CheckIcon,
   ZapIcon,
+  MicrophoneIcon,
 } from "./icons";
 import { testGeminiApiKey } from "../services/aiService";
+import {
+  GROQ_API_KEY_STORAGE,
+  LISTENING_MODE_STORAGE,
+  testGroqApiKey,
+} from "../audio/audioEngine";
+
+// Feature flag: Deactivate AI settings section for now as per user request
+const ENABLE_AI_SETTINGS = false;
 
 interface SettingsViewProps {
   profile: UserProfile;
@@ -57,6 +66,60 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const [apiSuccessMsg, setApiSuccessMsg] = useState(false);
   const [isTestingApi, setIsTestingApi] = useState(false);
   const [apiTestResult, setApiTestResult] = useState<{ success: boolean; message: string } | null>(null);
+
+  // Pure Audio Engine & Groq Whisper state
+  const [groqKeyInput, setGroqKeyInput] = useState("");
+  const [showGroqKey, setShowGroqKey] = useState(false);
+  const [groqSuccessMsg, setGroqSuccessMsg] = useState(false);
+  const [isTestingGroq, setIsTestingGroq] = useState(false);
+  const [groqTestResult, setGroqTestResult] = useState<{ success: boolean; message: string } | null>(null);
+  const [listeningMode, setListeningMode] = useState<"audio_only" | "dual">("audio_only");
+
+  useEffect(() => {
+    if (typeof chrome !== "undefined" && chrome.storage?.local) {
+      chrome.storage.local.get([GROQ_API_KEY_STORAGE, LISTENING_MODE_STORAGE], (res) => {
+        if (res?.[GROQ_API_KEY_STORAGE]) {
+          setGroqKeyInput(res[GROQ_API_KEY_STORAGE]);
+        }
+        if (res?.[LISTENING_MODE_STORAGE]) {
+          setListeningMode(res[LISTENING_MODE_STORAGE]);
+        }
+      });
+    }
+  }, []);
+
+  const handleGroqSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (typeof chrome !== "undefined" && chrome.storage?.local) {
+      chrome.storage.local.set({ [GROQ_API_KEY_STORAGE]: groqKeyInput.trim() }, () => {
+        setGroqSuccessMsg(true);
+        setTimeout(() => setGroqSuccessMsg(false), 2200);
+      });
+    }
+  };
+
+  const handleTestGroq = async () => {
+    setIsTestingGroq(true);
+    setGroqTestResult(null);
+    try {
+      const res = await testGroqApiKey(groqKeyInput.trim());
+      setGroqTestResult(res);
+      if (res.success && typeof chrome !== "undefined" && chrome.storage?.local) {
+        chrome.storage.local.set({ [GROQ_API_KEY_STORAGE]: groqKeyInput.trim() });
+      }
+    } catch (e: any) {
+      setGroqTestResult({ success: false, message: e?.message || "Test failed" });
+    } finally {
+      setIsTestingGroq(false);
+    }
+  };
+
+  const handleModeChange = (mode: "audio_only" | "dual") => {
+    setListeningMode(mode);
+    if (typeof chrome !== "undefined" && chrome.storage?.local) {
+      chrome.storage.local.set({ [LISTENING_MODE_STORAGE]: mode });
+    }
+  };
 
   const handleProfileSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -320,7 +383,190 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
         </form>
       </div>
 
-      {/* SECTION 2: AI Answer Engine (Free Gemini API) */}
+      {/* SECTION 2: AI Answer Engine (Deactivated as per user request - focusing 100% on the alert engine) */}
+      {ENABLE_AI_SETTINGS && (
+        <div
+          style={{
+            backgroundColor: THEME.colors.bgSecondary,
+            border: `1px solid ${THEME.colors.border}`,
+            borderRadius: THEME.radius.lg,
+            padding: "16px",
+            marginBottom: "16px",
+          }}
+        >
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "10px" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+              <LightningIcon size={16} color={THEME.colors.accentGreen} />
+              <span style={{ fontSize: "13.5px", fontWeight: 600 }}>AI Answer Engine (Gemini Flash)</span>
+            </div>
+            <span
+              style={{
+                fontSize: "10px",
+                fontWeight: 700,
+                padding: "2px 6px",
+                borderRadius: THEME.radius.xs,
+                backgroundColor: geminiApiKey ? THEME.colors.greenMutedBg : THEME.colors.surface,
+                color: geminiApiKey ? THEME.colors.accentGreen : THEME.colors.textSecondary,
+                border: `1px solid ${geminiApiKey ? THEME.colors.greenBorder : THEME.colors.border}`,
+              }}
+            >
+              {geminiApiKey ? "ACTIVE" : "OPTIONAL"}
+            </span>
+          </div>
+
+          <p style={{ margin: "0 0 12px 0", fontSize: "11.5px", color: THEME.colors.textSecondary, lineHeight: 1.45 }}>
+            Generates deep, factual answers to direct questions using Google Gemini Flash.
+          </p>
+
+          {apiSuccessMsg && (
+            <div
+              style={{
+                padding: "7px 10px",
+                marginBottom: "12px",
+                backgroundColor: THEME.colors.greenMutedBg,
+                border: `1px solid ${THEME.colors.greenBorder}`,
+                borderRadius: THEME.radius.sm,
+                fontSize: "11.5px",
+                color: THEME.colors.accentGreen,
+                display: "flex",
+                alignItems: "center",
+                gap: "6px",
+              }}
+            >
+              <CheckIcon size={14} color={THEME.colors.accentGreen} />
+              <span>API Key saved securely!</span>
+            </div>
+          )}
+
+          {apiTestResult && (
+            <div
+              style={{
+                padding: "8px 12px",
+                marginBottom: "12px",
+                backgroundColor: apiTestResult.success ? THEME.colors.greenMutedBg : "rgba(239, 68, 68, 0.12)",
+                border: `1px solid ${apiTestResult.success ? THEME.colors.greenBorder : "rgba(239, 68, 68, 0.4)"}`,
+                borderRadius: THEME.radius.sm,
+                fontSize: "11.5px",
+                color: apiTestResult.success ? THEME.colors.accentGreen : "#FCA5A5",
+                display: "flex",
+                alignItems: "center",
+                gap: "6px",
+              }}
+            >
+              {apiTestResult.success ? (
+                <CheckIcon size={14} color={THEME.colors.accentGreen} />
+              ) : (
+                <span>⚠️</span>
+              )}
+              <span>{apiTestResult.message}</span>
+            </div>
+          )}
+
+          <form onSubmit={handleApiKeySubmit}>
+            <div style={{ marginBottom: "10px" }}>
+              <label style={{ display: "block", fontSize: "11.5px", fontWeight: 500, color: THEME.colors.textSecondary, marginBottom: "5px" }}>
+                Google Gemini API Key
+              </label>
+              <div style={{ position: "relative" }}>
+                <input
+                  type={showApiKey ? "text" : "password"}
+                  placeholder="AIzaSy..."
+                  value={apiKeyInput}
+                  onChange={(e) => setApiKeyInput(e.target.value)}
+                  style={{
+                    width: "100%",
+                    padding: "8px 60px 8px 10px",
+                    backgroundColor: THEME.colors.surface,
+                    border: `1px solid ${THEME.colors.border}`,
+                    borderRadius: THEME.radius.sm,
+                    fontSize: "12.5px",
+                    color: THEME.colors.textPrimary,
+                    fontFamily: THEME.typography.monoFamily,
+                    boxSizing: "border-box",
+                    outline: "none",
+                  }}
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowApiKey(!showApiKey)}
+                  style={{
+                    position: "absolute",
+                    right: "8px",
+                    top: "50%",
+                    transform: "translateY(-50%)",
+                    background: "none",
+                    border: "none",
+                    color: THEME.colors.textSecondary,
+                    fontSize: "11px",
+                    cursor: "pointer",
+                    padding: "4px",
+                  }}
+                >
+                  {showApiKey ? "Hide" : "Show"}
+                </button>
+              </div>
+              <div style={{ marginTop: "6px", fontSize: "11px", color: THEME.colors.textSecondary }}>
+                Don't have a key?{" "}
+                <a
+                  href="https://aistudio.google.com/apikey"
+                  target="_blank"
+                  rel="noreferrer"
+                  style={{ color: THEME.colors.accentGreen, textDecoration: "none", fontWeight: 600, display: "inline-flex", alignItems: "center", gap: "2px" }}
+                >
+                  <span>Get free key at Google AI Studio</span>
+                  <ExternalLinkIcon size={10} color={THEME.colors.accentGreen} />
+                </a>
+              </div>
+            </div>
+
+            <div style={{ display: "flex", gap: "8px" }}>
+              <button
+                type="button"
+                onClick={handleTestConnection}
+                disabled={isTestingApi || !apiKeyInput.trim()}
+                style={{
+                  flex: 1,
+                  padding: "9px 12px",
+                  backgroundColor: THEME.colors.greenMutedBg,
+                  border: `1px solid ${THEME.colors.greenBorder}`,
+                  borderRadius: THEME.radius.md,
+                  color: THEME.colors.accentGreen,
+                  fontSize: "12px",
+                  fontWeight: 600,
+                  cursor: isTestingApi || !apiKeyInput.trim() ? "not-allowed" : "pointer",
+                  opacity: isTestingApi || !apiKeyInput.trim() ? 0.6 : 1,
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  gap: "5px",
+                }}
+              >
+                <LightningIcon size={13} color={THEME.colors.accentGreen} />
+                <span>{isTestingApi ? "Testing..." : "Test AI"}</span>
+              </button>
+
+              <button
+                type="submit"
+                style={{
+                  flex: 1,
+                  padding: "9px 12px",
+                  backgroundColor: THEME.colors.surfaceHighlight,
+                  border: `1px solid ${THEME.colors.borderActive}`,
+                  borderRadius: THEME.radius.md,
+                  color: THEME.colors.textPrimary,
+                  fontSize: "12px",
+                  fontWeight: 600,
+                  cursor: "pointer",
+                }}
+              >
+                Save Key
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {/* SECTION: Speech & Audio Engine (Groq Whisper Large V3 - Zero Captions) */}
       <div
         style={{
           backgroundColor: THEME.colors.bgSecondary,
@@ -330,10 +576,10 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           marginBottom: "16px",
         }}
       >
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "10px" }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "8px" }}>
           <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-            <LightningIcon size={16} color={THEME.colors.accentGreen} />
-            <span style={{ fontSize: "13.5px", fontWeight: 600 }}>AI Answer Engine (Gemini Flash)</span>
+            <MicrophoneIcon size={16} color={THEME.colors.accentGreen} />
+            <span style={{ fontSize: "13.5px", fontWeight: 600 }}>Pure Audio Engine (Groq Whisper)</span>
           </div>
           <span
             style={{
@@ -341,20 +587,66 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               fontWeight: 700,
               padding: "2px 6px",
               borderRadius: THEME.radius.xs,
-              backgroundColor: geminiApiKey ? THEME.colors.greenMutedBg : THEME.colors.surface,
-              color: geminiApiKey ? THEME.colors.accentGreen : THEME.colors.textSecondary,
-              border: `1px solid ${geminiApiKey ? THEME.colors.greenBorder : THEME.colors.border}`,
+              backgroundColor: groqKeyInput ? THEME.colors.greenMutedBg : THEME.colors.surface,
+              color: groqKeyInput ? THEME.colors.accentGreen : THEME.colors.textSecondary,
+              border: `1px solid ${groqKeyInput ? THEME.colors.greenBorder : THEME.colors.border}`,
             }}
           >
-            {geminiApiKey ? "ACTIVE" : "OPTIONAL"}
+            {groqKeyInput ? "GROQ ACTIVE" : "FREE BACKUP"}
           </span>
         </div>
 
         <p style={{ margin: "0 0 12px 0", fontSize: "11.5px", color: THEME.colors.textSecondary, lineHeight: 1.45 }}>
-          Generates deep, factual answers to direct questions using Google Gemini Flash.
+          Listens directly to live meeting sound using Groq's high-speed Whisper Large V3 Turbo model. Completely independent of Google Meet captions.
         </p>
 
-        {apiSuccessMsg && (
+        {/* Listening Mode Toggle */}
+        <div style={{ marginBottom: "14px" }}>
+          <label style={{ display: "block", fontSize: "11px", fontWeight: 600, color: THEME.colors.textSecondary, marginBottom: "6px" }}>
+            LISTENING MODE
+          </label>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "6px" }}>
+            <button
+              type="button"
+              onClick={() => handleModeChange("audio_only")}
+              style={{
+                padding: "8px 10px",
+                borderRadius: THEME.radius.sm,
+                backgroundColor: listeningMode === "audio_only" ? THEME.colors.greenMutedBg : THEME.colors.surface,
+                border: `1px solid ${listeningMode === "audio_only" ? THEME.colors.greenBorder : THEME.colors.border}`,
+                color: listeningMode === "audio_only" ? THEME.colors.accentGreen : THEME.colors.textSecondary,
+                fontSize: "11.5px",
+                fontWeight: 600,
+                cursor: "pointer",
+                textAlign: "center",
+              }}
+            >
+              🎤 Pure Audio
+              <div style={{ fontSize: "9.5px", fontWeight: 400, opacity: 0.85, marginTop: "2px" }}>Zero Meet Captions</div>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => handleModeChange("dual")}
+              style={{
+                padding: "8px 10px",
+                borderRadius: THEME.radius.sm,
+                backgroundColor: listeningMode === "dual" ? THEME.colors.greenMutedBg : THEME.colors.surface,
+                border: `1px solid ${listeningMode === "dual" ? THEME.colors.greenBorder : THEME.colors.border}`,
+                color: listeningMode === "dual" ? THEME.colors.accentGreen : THEME.colors.textSecondary,
+                fontSize: "11.5px",
+                fontWeight: 600,
+                cursor: "pointer",
+                textAlign: "center",
+              }}
+            >
+              ✨ Dual Mode
+              <div style={{ fontSize: "9.5px", fontWeight: 400, opacity: 0.85, marginTop: "2px" }}>Audio + Captions</div>
+            </button>
+          </div>
+        </div>
+
+        {groqSuccessMsg && (
           <div
             style={{
               padding: "7px 10px",
@@ -370,52 +662,52 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             }}
           >
             <CheckIcon size={14} color={THEME.colors.accentGreen} />
-            <span>API Key saved securely!</span>
+            <span>Groq API Key saved successfully!</span>
           </div>
         )}
 
-        {apiTestResult && (
+        {groqTestResult && (
           <div
             style={{
               padding: "8px 12px",
               marginBottom: "12px",
-              backgroundColor: apiTestResult.success ? THEME.colors.greenMutedBg : "rgba(239, 68, 68, 0.12)",
-              border: `1px solid ${apiTestResult.success ? THEME.colors.greenBorder : "rgba(239, 68, 68, 0.4)"}`,
+              backgroundColor: groqTestResult.success ? THEME.colors.greenMutedBg : "rgba(239, 68, 68, 0.12)",
+              border: `1px solid ${groqTestResult.success ? THEME.colors.greenBorder : "rgba(239, 68, 68, 0.4)"}`,
               borderRadius: THEME.radius.sm,
               fontSize: "11.5px",
-              color: apiTestResult.success ? THEME.colors.accentGreen : "#FCA5A5",
+              color: groqTestResult.success ? THEME.colors.accentGreen : "#FCA5A5",
               display: "flex",
               alignItems: "center",
               gap: "6px",
             }}
           >
-            {apiTestResult.success ? (
+            {groqTestResult.success ? (
               <CheckIcon size={14} color={THEME.colors.accentGreen} />
             ) : (
               <span>⚠️</span>
             )}
-            <span>{apiTestResult.message}</span>
+            <span>{groqTestResult.message}</span>
           </div>
         )}
 
-        <form onSubmit={handleApiKeySubmit}>
+        <form onSubmit={handleGroqSubmit}>
           <div style={{ marginBottom: "10px" }}>
             <label style={{ display: "block", fontSize: "11.5px", fontWeight: 500, color: THEME.colors.textSecondary, marginBottom: "5px" }}>
-              Google Gemini API Key
+              Groq API Key (100% Free · Whisper Large V3)
             </label>
             <div style={{ position: "relative" }}>
               <input
-                type={showApiKey ? "text" : "password"}
-                placeholder="AIzaSy..."
-                value={apiKeyInput}
-                onChange={(e) => setApiKeyInput(e.target.value)}
+                type={showGroqKey ? "text" : "password"}
+                placeholder="gsk_..."
+                value={groqKeyInput}
+                onChange={(e) => setGroqKeyInput(e.target.value)}
                 style={{
                   width: "100%",
                   padding: "8px 60px 8px 10px",
                   backgroundColor: THEME.colors.surface,
                   border: `1px solid ${THEME.colors.border}`,
                   borderRadius: THEME.radius.sm,
-                  fontSize: "12.5px",
+                  fontSize: "12px",
                   color: THEME.colors.textPrimary,
                   fontFamily: THEME.typography.monoFamily,
                   boxSizing: "border-box",
@@ -424,7 +716,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               />
               <button
                 type="button"
-                onClick={() => setShowApiKey(!showApiKey)}
+                onClick={() => setShowGroqKey(!showGroqKey)}
                 style={{
                   position: "absolute",
                   right: "8px",
@@ -438,19 +730,18 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                   padding: "4px",
                 }}
               >
-                {showApiKey ? "Hide" : "Show"}
+                {showGroqKey ? "Hide" : "Show"}
               </button>
             </div>
             <div style={{ marginTop: "6px", fontSize: "11px", color: THEME.colors.textSecondary }}>
-              Don't have a key?{" "}
+              Don't have a free key?{" "}
               <a
-                href="https://aistudio.google.com/apikey"
+                href="https://console.groq.com/keys"
                 target="_blank"
                 rel="noreferrer"
-                style={{ color: THEME.colors.accentGreen, textDecoration: "none", fontWeight: 600, display: "inline-flex", alignItems: "center", gap: "2px" }}
+                style={{ color: THEME.colors.accentGreen, textDecoration: "none" }}
               >
-                <span>Get free key at Google AI Studio</span>
-                <ExternalLinkIcon size={10} color={THEME.colors.accentGreen} />
+                Get one free in 10s (No card needed) ↗
               </a>
             </div>
           </div>
@@ -458,44 +749,39 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           <div style={{ display: "flex", gap: "8px" }}>
             <button
               type="button"
-              onClick={handleTestConnection}
-              disabled={isTestingApi || !apiKeyInput.trim()}
+              disabled={isTestingGroq || !groqKeyInput.trim()}
+              onClick={handleTestGroq}
               style={{
                 flex: 1,
-                padding: "9px 12px",
-                backgroundColor: THEME.colors.greenMutedBg,
-                border: `1px solid ${THEME.colors.greenBorder}`,
+                padding: "8px 12px",
+                backgroundColor: THEME.colors.surface,
+                border: `1px solid ${THEME.colors.border}`,
                 borderRadius: THEME.radius.md,
-                color: THEME.colors.accentGreen,
-                fontSize: "12px",
-                fontWeight: 600,
-                cursor: isTestingApi || !apiKeyInput.trim() ? "not-allowed" : "pointer",
-                opacity: isTestingApi || !apiKeyInput.trim() ? 0.6 : 1,
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                gap: "5px",
+                color: THEME.colors.textPrimary,
+                fontSize: "11.5px",
+                fontWeight: 500,
+                cursor: isTestingGroq || !groqKeyInput.trim() ? "not-allowed" : "pointer",
+                opacity: isTestingGroq || !groqKeyInput.trim() ? 0.6 : 1,
               }}
             >
-              <LightningIcon size={13} color={THEME.colors.accentGreen} />
-              <span>{isTestingApi ? "Testing..." : "Test AI"}</span>
+              {isTestingGroq ? "Testing..." : "Test Groq"}
             </button>
 
             <button
               type="submit"
               style={{
                 flex: 1,
-                padding: "9px 12px",
+                padding: "8px 12px",
                 backgroundColor: THEME.colors.surfaceHighlight,
                 border: `1px solid ${THEME.colors.borderActive}`,
                 borderRadius: THEME.radius.md,
                 color: THEME.colors.textPrimary,
-                fontSize: "12px",
+                fontSize: "11.5px",
                 fontWeight: 600,
                 cursor: "pointer",
               }}
             >
-              Save Key
+              Save Groq Key
             </button>
           </div>
         </form>

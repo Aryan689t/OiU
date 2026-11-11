@@ -96,8 +96,13 @@ export class EventDetector {
       now
     );
 
-    // 1. Check if this is a streaming continuation of the active turn
-    if (this.activeTurn && this.isContinuationOf(text, this.activeTurn, now, speaker)) {
+    // Check if the current active turn has exceeded the 7-second time limit
+    if (this.activeTurn && now - this.activeTurn.startTime >= 7000) {
+      this.activeTurn.isCompleted = true;
+    }
+
+    // 1. Check if this is a streaming continuation of the active turn (strictly within 7 seconds)
+    if (this.activeTurn && !this.activeTurn.isCompleted && this.isContinuationOf(text, this.activeTurn, now, speaker)) {
       const cleanIncoming = text.toLowerCase().replace(/[^a-z0-9]/g, "");
       const cleanCurrent = this.activeTurn.accumulatedText.toLowerCase().replace(/[^a-z0-9]/g, "");
 
@@ -171,15 +176,8 @@ export class EventDetector {
           const lowerText = updatedActiveSentence.text.toLowerCase();
           const isQuestion = this.checkQuestionPattern(lowerText);
 
-          // Update alert excerpt cleanly (only the question + connected follow-up, NOT 500 chars!)
-          if (updatedDialogue.sentences.length <= 1) {
-            this.activeTurn.alertEvent.transcriptExcerpt = updatedActiveSentence.text;
-          } else {
-            const prevExcerpt = this.activeTurn.alertEvent.transcriptExcerpt;
-            if (!prevExcerpt.includes(updatedActiveSentence.text)) {
-              this.activeTurn.alertEvent.transcriptExcerpt = `${prevExcerpt} ${updatedActiveSentence.text}`.trim();
-            }
-          }
+          // Update alert excerpt cleanly to focus on the active sentence / core question (never append past questions)
+          this.activeTurn.alertEvent.transcriptExcerpt = updatedDialogue.coreFocusText || updatedActiveSentence.text;
 
           if (isQuestion && this.activeTurn.alertEvent.type !== "DIRECT_QUESTION") {
             this.activeTurn.alertEvent.type = "DIRECT_QUESTION";
@@ -300,11 +298,11 @@ export class EventDetector {
   private isContinuationOf(incomingText: string, currentTurn: SpeechTurn, now: number, speaker: string): boolean {
     if (currentTurn.isCompleted) return false;
 
-    // Hard ceiling: A single spoken utterance continuation cannot span more than 3.5 seconds
-    if (now - currentTurn.startTime > 3500) return false;
+    // Hard ceiling: User 7-second rule - a single spoken utterance continuation cannot span >= 7000ms
+    if (now - currentTurn.startTime >= 7000) return false;
 
-    // Pause limit: If speaker stopped talking for > 1600ms, sentence is completed
-    if (now - currentTurn.lastUpdateTime > 1600) return false;
+    // Pause limit: If speaker stopped talking for > 1800ms, sentence is completed
+    if (now - currentTurn.lastUpdateTime > 1800) return false;
 
     // Speaker check (coalesce generic or voice engine speaker tags if text is continuous)
     const isVoiceOrGeneric =
