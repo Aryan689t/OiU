@@ -7,7 +7,7 @@
 <p align="center">
   <a href="#-key-features"><img src="https://img.shields.io/badge/Chrome-Manifest_V3-4285F4?style=flat-square&logo=google-chrome&logoColor=white" alt="Chrome MV3" /></a>
   <a href="#-architecture"><img src="https://img.shields.io/badge/Platform-Google_Meet-00897B?style=flat-square&logo=google-meet&logoColor=white" alt="Google Meet" /></a>
-  <a href="#-multi-tier-ai-intelligence"><img src="https://img.shields.io/badge/AI-Gemini_Flash_%2B_Wiki-8E24AA?style=flat-square&logo=google-gemini&logoColor=white" alt="Gemini Flash" /></a>
+  <a href="#-3-intelligent-ai-response-engine"><img src="https://img.shields.io/badge/AI-Gemini_Flash_%2B_Wiki-8E24AA?style=flat-square&logo=google-gemini&logoColor=white" alt="Gemini Flash" /></a>
   <a href="#-privacy--security"><img src="https://img.shields.io/badge/Privacy-100%25_Client--Side-success?style=flat-square" alt="Privacy First" /></a>
   <a href="#-getting-started"><img src="https://img.shields.io/badge/TypeScript-5.5-3178C6?style=flat-square&logo=typescript&logoColor=white" alt="TypeScript" /></a>
   <a href="#-license"><img src="https://img.shields.io/badge/License-MIT-blue?style=flat-square" alt="License" /></a>
@@ -23,7 +23,7 @@ During online lectures, viva sessions, client meetings, or standups, people get 
 - 🚫 **Zero Bots**: No third-party participant joins your call.
 - 🔒 **100% Client-Side Privacy**: Runs completely inside your Chrome browser. No audio is ever recorded, saved, or uploaded to a central server.
 - ⚡ **Instant Attention Layer**: Wakes you up with a gentle audio chime the millisecond your name, roll number, attendance call, or question is spoken.
-- 💡 **Instant Spoken Responses**: Provides 3 grounded, spoken-ready responses (Direct, Professional, Clarification) powered by Google Gemini 1.5/2.0 Flash or real-time offline knowledge dictionaries.
+- 💡 **Instant Spoken Responses**: Provides 3 grounded, spoken-ready responses (Direct, Professional, Clarification) powered by Google Gemini 1.5/2.0 Flash with live Wikipedia fallback.
 
 ---
 
@@ -46,10 +46,9 @@ During online lectures, viva sessions, client meetings, or standups, people get 
   * Recognizes connective speech prefixes (*"tatha"*, *"aur"*, *"and"*, *"also"*) as thoughts continuing from the previous question.
   * Discards questions addressed to other participants (*"Swagat, what is your answer?"*).
 
-### 🤖 3. Multi-Tier AI Intelligence
-* **Tier 1 — Google Gemini Flash**: Integrates directly with `gemini-1.5-flash` and `gemini-2.0-flash` via HTTPS with sub-second latency. Prompts are strictly grounded in the meeting excerpt to eliminate hallucinations.
-* **Tier 2 — Universal Wikipedia REST API**: Free, 0-API-key fallback that queries Wikipedia's knowledge graph in ~120ms to provide accurate definitions for academic, technical, or viva questions.
-* **Tier 3 — 0ms Instant Knowledge Dictionary**: Built-in curated definitions for 50+ core scientific and technical topics (Mitochondria, Photosynthesis, Atoms, Molecules, APIs, Data, etc.) with zero latency.
+### 🤖 3. Intelligent AI Response Engine
+* **Google Gemini Flash (Primary)**: Integrates directly with `gemini-1.5-flash` and `gemini-2.0-flash` via HTTPS with sub-second latency. Prompts are strictly grounded in the meeting excerpt to eliminate hallucinations.
+* **Universal Wikipedia REST API (Fallback)**: Free, 0-API-key fallback that queries Wikipedia's knowledge graph in ~120ms to provide accurate definitions for academic, technical, or viva questions.
 * **3 Actionable Formats**:
   1. `Direct`: 1-2 sentence crisp factual answer.
   2. `Professional`: Articulate, polite, and contextual response.
@@ -214,7 +213,7 @@ npm run build
 | :--- | :---: | :---: |
 | `@oiu/shared` (Matcher, Detector, Sentence Parser) | 22 | ✅ PASS |
 | `@oiu/server` (Health check & routing) | 1 | ✅ PASS |
-| `@oiu/extension` (aiService & Knowledge Resolution) | 7 | ✅ PASS |
+| `@oiu/extension` (aiService & Fact Resolution) | 7 | ✅ PASS |
 
 ---
 
