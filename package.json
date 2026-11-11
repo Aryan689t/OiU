@@ -11,7 +11,8 @@
     "dev:extension": "npm run -w @oiu/extension dev",
     "build": "npm run -w @oiu/shared build && npm run -w @oiu/extension build && npm run -w @oiu/server build",
     "typecheck": "npm run -w @oiu/shared typecheck && npm run -w @oiu/extension typecheck && npm run -w @oiu/server typecheck",
-    "test": "npm run -w @oiu/shared test && npm run -w @oiu/server test"
+    "test": "npm run -w @oiu/shared test && npm run -w @oiu/server test",
+    "package": "npm run build && powershell -NoProfile -Command \"$ProgressPreference = 'SilentlyContinue'; Compress-Archive -Path packages/extension/dist/* -DestinationPath oiu-extension.zip -Force\""
   },
   "devDependencies": {
     "@rollup/wasm-node": "^4.68.1",
