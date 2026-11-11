@@ -230,3 +230,34 @@ test("EventDetector triggers alert when user-configured keyword 'Attendance' is 
   assert.equal(res3.turnAction, "NEW_ALERT");
   assert.match(res3.event!.explanation, /Attendance/i);
 });
+
+test("EventDetector catches slight spelling mistakes in user keywords and arbitrary names without hardcoding", () => {
+  const typoProfile = {
+    displayName: "Sanskriti",
+    aliases: ["Vansh"],
+    identifiers: [],
+    keywords: ["Attendence", "microservises"], // deliberate user typos
+  };
+  const detector1 = new EventDetector(typoProfile);
+
+  // User entered "Attendence", captions output "attendance"
+  const res1 = detector1.processSegment(createSegment("Everyone please mark your attendance now."));
+  assert.equal(res1.hasEvent, true, "Misspelled keyword 'Attendence' should match 'attendance'");
+  assert.equal(res1.event?.type, "ATTENDANCE_CALL");
+
+  // User entered "microservises", captions output "microservices"
+  const detector2 = new EventDetector(typoProfile);
+  const res2 = detector2.processSegment(createSegment("Let's review the microservices architecture."));
+  assert.equal(res2.hasEvent, true, "Typo keyword 'microservises' should match 'microservices'");
+  assert.equal(res2.event?.type, "KEYWORD_MENTION");
+
+  // Arbitrary name "Sanskriti" with STT variation "Sanskreeti"
+  const detector3 = new EventDetector(typoProfile);
+  const res3 = detector3.processSegment(createSegment("Sanskreeti can you share the screen?"));
+  assert.equal(res3.hasEvent, true, "Arbitrary name 'Sanskriti' should match 'Sanskreeti' dynamically");
+
+  // Arbitrary alias "Vansh" with STT variation "Wansh"
+  const detector4 = new EventDetector(typoProfile);
+  const res4 = detector4.processSegment(createSegment("Hey Wansh are you there?"));
+  assert.equal(res4.hasEvent, true, "Alias 'Vansh' should match 'Wansh' dynamically");
+});

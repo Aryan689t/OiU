@@ -365,10 +365,12 @@ function cleanTopicKey(text: string, profile?: UserProfile): string {
         cleaned = cleaned.replace(new RegExp(`\\b${id.toLowerCase().trim()}\\b`, "g"), " ");
       }
     }
+    for (const kw of profile.keywords || []) {
+      if (kw.trim()) {
+        cleaned = cleaned.replace(new RegExp(`\\b${kw.toLowerCase().trim()}\\b`, "g"), " ");
+      }
+    }
   }
-
-  // Strip other common participant names or words from meeting captions
-  cleaned = cleaned.replace(/\b(ryan|aryan|tathagat|tatha|swagat|shivam|rahul|priya|ankit)\b/gi, " ");
 
   // Normalize speech-to-text phonetic and grammar glitches
   cleaned = cleaned.replace(/\bise\s+d\b/gi, "is the");
@@ -667,14 +669,14 @@ export async function generateSmartResponses(
       "gemini-1.5-flash-latest",
     ];
 
-    const prompt = `You are an intelligent real-time meeting copilot assisting ${profile.displayName || "Aryan"} (ID/Roll: "${idStr}").
+    const prompt = `You are an intelligent real-time meeting copilot assisting ${profile.displayName || "the user"} (ID/Roll: "${idStr}").
 The meeting speaker just directly asked or said to you:
 "${coreText || event.transcriptExcerpt}"
 
 Recent conversation context from the meeting:
 "${recentContext.slice(-450)}"
 
-Generate 3 natural, spoken-ready responses that ${profile.displayName || "Aryan"} can immediately read aloud to answer the speaker in the meeting:
+Generate 3 natural, spoken-ready responses that ${profile.displayName || "the user"} can immediately read aloud to answer the speaker in the meeting:
 1. "direct": A clear, accurate, 1-2 sentence answer directly answering the question (whether technical, factual, viva concept, project update, or opinion). Answer accurately with zero generic filler.
 2. "professional": A polite, articulate, and well-reasoned response with appropriate depth.
 3. "clarification": A natural follow-up or clarifying question to keep the conversation flowing.
@@ -752,7 +754,7 @@ async function fetchFreeUniversalAI(
 ): Promise<SuggestedResponse[] | null> {
   try {
     const idStr = profile.identifiers[0] || "";
-    const prompt = `You are an intelligent real-time meeting copilot assisting ${profile.displayName || "Aryan"} (ID: "${idStr}").
+    const prompt = `You are an intelligent real-time meeting copilot assisting ${profile.displayName || "the user"} (ID: "${idStr}").
 The speaker just directly asked in the meeting: "${question}".
 Context of recent meeting speech: "${recentContext.slice(-300)}".
 Generate 3 natural, spoken-ready responses directly answering the question with zero filler buzzwords:

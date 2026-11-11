@@ -61,6 +61,8 @@ let monitoringStartTime = 0;
 let lastCaptionTime = 0;
 let lastAudioActivityTime = 0;
 let lastAutoBounceTime = 0;
+let lastAudioLevelSent = 0;
+let lastAudioLevelTime = 0;
 let userManuallyTurnedOffCaptions = false;
 
 // Listen for user clicks on the caption button to detect manual turn-off
@@ -462,24 +464,18 @@ function processCaptionText(rawText: string, speakerHint?: string) {
 
 function baselineExistingCaptions() {
   try {
+    recentUtteranceMap.clear();
     const existing = document.querySelectorAll(
-      '[jsname="tgaKEf"], span.V67aGc, div.nMxLec, div.VbkSUe, [jsname="r4nke"], div.iTTPOb, div.zT3Aid, div[jsname="YSvyfd"], div[jsname="YSfeed"], div[jscontroller="D1tHje"]'
+      '[jsname="tgaKEf"], span.V67aGc, div.nMxLec, div.VbkSUe, div.ygicle, div.BH9oQ, span.bh44bd, [jsname="r4nke"], div.iTTPOb, div.zT3Aid, div[jsname="YSvyfd"], div[jsname="YSfeed"], div[jscontroller="D1tHje"], [role="region"][aria-label*="caption" i]'
     );
-    const now = Date.now();
     existing.forEach((node) => {
       const el = node as HTMLElement;
-      const text = el.textContent?.trim();
-      if (text && text.length > 1) {
-        el.dataset.oiuLastText = text;
-        el.dataset.oiuSealedLength = String(text.length); // SEAL all past captions so they are never alerted!
-        el.dataset.oiuLastChangeTime = String(now);
-        const normalizedKey = text.toLowerCase().replace(/[^a-z0-9]/g, "");
-        if (normalizedKey) {
-          recentUtteranceMap.set(normalizedKey, now);
-        }
-      }
+      delete el.dataset.oiuLastText;
+      delete el.dataset.oiuSealedLength;
+      delete el.dataset.oiuSentenceStartTime;
+      delete el.dataset.oiuLastChangeTime;
     });
-    console.log(`[OiU] Baselined and sealed ${existing.length} existing DOM captions so old past speech is not alerted.`);
+    console.log(`[OiU] Prepared caption baseline for new session (${existing.length} nodes reset).`);
   } catch (err) {
     console.warn("[OiU] Error baselining existing captions:", err);
   }
@@ -489,23 +485,32 @@ function scanDOMForCaptions() {
   if (!isMonitoringActive) return;
 
   try {
-    // 1. Scan live subtitle text spans (query inner leaf spans first to prevent parent/child double-read)
-    let subtitleNodes = document.querySelectorAll(
-      '[jsname="tgaKEf"], span.V67aGc, div.nMxLec, div.VbkSUe, [jsname="r4nke"]'
-    );
+    // 1. Scan live subtitle text spans (strictly exclude UI buttons/dropdowns/chat to prevent false blocking)
+    let subtitleNodes = Array.from(
+      document.querySelectorAll(
+        '[jsname="tgaKEf"], div.VbkSUe, div.ygicle, div.BH9oQ, span.bh44bd, [role="region"][aria-label*="caption" i] span.V67aGc, div.nMxLec span.V67aGc, div.iTTPOb span.V67aGc, [role="region"][aria-label*="caption" i] [jsname="r4nke"]'
+      )
+    ).filter((node) => {
+      if (node.closest('button, [role="button"], [role="combobox"], [role="listbox"], [aria-label*="chat" i], [jsname="xySENc"], [role="log"]')) {
+        return false;
+      }
+      return true;
+    });
+
     if (subtitleNodes.length === 0) {
-      subtitleNodes = document.querySelectorAll('div.nMxLec, div.VbkSUe');
+      subtitleNodes = Array.from(
+        document.querySelectorAll('div.nMxLec, div.iTTPOb, div.zT3Aid, div[jscontroller="D1tHje"]')
+      ).filter((node) => {
+        return !node.closest('button, [role="button"], [aria-label*="chat" i], [jsname="xySENc"], [role="log"]');
+      });
     }
     let capturedAny = false;
 
     if (subtitleNodes.length > 0) {
       subtitleNodes.forEach((node) => {
-        if (node.closest('[aria-label*="chat" i], [jsname="xySENc"], [role="log"]')) {
-          return;
-        }
         const el = node as HTMLElement;
         const fullText = el.textContent?.trim() || "";
-        if (fullText.length < 2) return;
+        if (fullText.length < 2 || isIgnoredUIString(fullText)) return;
 
         // Zero duplicate reading: if this DOM element has not changed, do nothing!
         if (el.dataset.oiuLastText === fullText) {
@@ -757,64 +762,54 @@ function startMonitoring() {
 
   cleanOldBadge();
 
-  // Read user configuration: listening mode ("audio_only" vs "dual") and Groq API key
-  chrome.storage.local.get([LISTENING_MODE_STORAGE, GROQ_API_KEY_STORAGE], (result) => {
-    const mode = result?.[LISTENING_MODE_STORAGE] || "audio_only";
-    const groqKey = (result?.[GROQ_API_KEY_STORAGE] || "").trim();
+  // 1. ALWAYS start Native Google Meet Captions Engine & DOM Scanner
+  ensureMeetCaptionsOn();
+  baselineExistingCaptions();
 
-    // 1. ALWAYS start Pure Audio Engine (Groq Whisper Large V3 + VAD + Web Speech fallback)
-    pureAudioEngine.start({
-      groqApiKey: groqKey,
-      onTranscript: (segment) => {
-        processCaptionText(segment.text, segment.speakerId || "Live Meeting Audio");
-      },
-      onAudioLevel: (level) => {
-        if (level > 0.04) {
-          lastAudioActivityTime = Date.now();
-        }
-        chrome.runtime.sendMessage({
-          type: "AUDIO_LEVEL",
-          payload: {
-            level: level,
-            packetsCaptured: 1,
-          },
-        }).catch(() => {});
-      },
-      onStatusChange: (status, message) => {
-        console.log(`[OiU Pure Audio Engine] Status: ${status} ${message ? `(${message})` : ""}`);
-      },
+  if (scanIntervalId) clearInterval(scanIntervalId);
+  scanIntervalId = setInterval(scanDOMForCaptions, 500);
+
+  if (captionRepairIntervalId) clearInterval(captionRepairIntervalId);
+  captionRepairIntervalId = setInterval(checkCaptionHealthAndWatchdog, 4000);
+
+  console.log("[OiU] Monitoring active: Native Google Meet Captions + Audio Visualizer + Stalled Caption Watchdog.");
+
+  // 2. ALWAYS start Audio Engine (meters volume for visualizer bars + handles Whisper / Web Speech cleanly without CSP conflicts)
+  try {
+    chrome.storage.local.get([GROQ_API_KEY_STORAGE], (result) => {
+      const groqKey = (result?.[GROQ_API_KEY_STORAGE] || "").trim();
+      pureAudioEngine.start({
+        groqApiKey: groqKey,
+        onTranscript: (segment) => {
+          processCaptionText(segment.text, segment.speakerId || "Live Meeting Audio");
+        },
+        onAudioLevel: (level) => {
+          const ts = Date.now();
+          if (level > 0.04) {
+            lastAudioActivityTime = ts;
+          }
+          if (Math.abs(level - lastAudioLevelSent) > 0.03 || (level > 0.03 && ts - lastAudioLevelTime > 120)) {
+            lastAudioLevelSent = level;
+            lastAudioLevelTime = ts;
+            chrome.runtime.sendMessage({
+              type: "AUDIO_LEVEL",
+              payload: {
+                level: level,
+                packetsCaptured: 1,
+              },
+            }).catch(() => {});
+          }
+        },
+      });
     });
-
-    if (mode === "audio_only") {
-      console.log("[OiU] Running in Pure Audio Mode (Groq Whisper Large V3). Google Meet captions remain completely untouched and OFF.");
-      return;
-    }
-
-    // 2. Dual mode: only if user explicitly selected "Dual Mode" in settings
-    ensureMeetCaptionsOn();
-    baselineExistingCaptions();
-    injectMainWorldVoiceEngine();
-
-    if (scanIntervalId) clearInterval(scanIntervalId);
-    scanIntervalId = setInterval(scanDOMForCaptions, 600);
-
-    if (captionRepairIntervalId) clearInterval(captionRepairIntervalId);
-    captionRepairIntervalId = setInterval(checkCaptionHealthAndWatchdog, 5000);
-
-    console.log("[OiU] Dual mode active (Audio Engine + Captions companion).");
-  });
+  } catch (err) {
+    console.warn("[OiU] Audio engine start note:", err);
+  }
 }
 
 function stopMonitoring() {
   isMonitoringActive = false;
   userManuallyTurnedOffCaptions = false;
-
-  // Stop pure audio engine cleanly
-  try {
-    pureAudioEngine.stop();
-  } catch (err) {
-    console.warn("[OiU] Error stopping pure audio engine:", err);
-  }
 
   if (scanIntervalId) {
     clearInterval(scanIntervalId);
@@ -825,15 +820,127 @@ function stopMonitoring() {
     captionRepairIntervalId = null;
   }
   stopMainWorldVoiceEngine();
+  try {
+    pureAudioEngine.stop();
+  } catch (err) {
+    console.warn("[OiU] Error stopping pure audio engine:", err);
+  }
   cleanOldBadge();
   recentUtteranceMap.clear();
   console.log("[OiU] Monitoring stopped.");
+}
+
+function playBackgroundAlertChime() {
+  try {
+    const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+    if (!AudioCtx) return;
+    const ctx = new AudioCtx();
+    if (ctx.state === "suspended") {
+      ctx.resume().catch(() => {});
+    }
+    const now = ctx.currentTime;
+
+    // First tone (E5 - 659.25 Hz)
+    const osc1 = ctx.createOscillator();
+    const gain1 = ctx.createGain();
+    osc1.type = "sine";
+    osc1.frequency.setValueAtTime(659.25, now);
+    gain1.gain.setValueAtTime(0.28, now);
+    gain1.gain.exponentialRampToValueAtTime(0.0001, now + 0.2);
+    osc1.connect(gain1);
+    gain1.connect(ctx.destination);
+    osc1.start(now);
+    osc1.stop(now + 0.2);
+
+    // Second tone (A5 - 880 Hz)
+    const osc2 = ctx.createOscillator();
+    const gain2 = ctx.createGain();
+    osc2.type = "sine";
+    osc2.frequency.setValueAtTime(880, now + 0.1);
+    gain2.gain.setValueAtTime(0.32, now + 0.1);
+    gain2.gain.exponentialRampToValueAtTime(0.0001, now + 0.35);
+    osc2.connect(gain2);
+    gain2.connect(ctx.destination);
+    osc2.start(now + 0.1);
+    osc2.stop(now + 0.35);
+
+    setTimeout(() => {
+      try { ctx.close(); } catch {}
+    }, 450);
+  } catch (err) {
+    console.warn("[OiU] Background chime playback note:", err);
+  }
+}
+
+let flashOverlayFadeTimeout: any = null;
+let flashOverlayRemoveTimeout: any = null;
+
+function clearMeetYellowScreenFlash() {
+  if (flashOverlayFadeTimeout) {
+    clearTimeout(flashOverlayFadeTimeout);
+    flashOverlayFadeTimeout = null;
+  }
+  if (flashOverlayRemoveTimeout) {
+    clearTimeout(flashOverlayRemoveTimeout);
+    flashOverlayRemoveTimeout = null;
+  }
+  const existing = document.getElementById("oiu-yellow-flash-overlay");
+  if (existing) existing.remove();
+}
+
+function showMeetYellowScreenFlash() {
+  try {
+    clearMeetYellowScreenFlash();
+
+    const overlay = document.createElement("div");
+    overlay.id = "oiu-yellow-flash-overlay";
+    overlay.style.cssText = [
+      "position: fixed",
+      "inset: 0",
+      "z-index: 2147483647",
+      "pointer-events: none",
+      "background: radial-gradient(circle at center, rgba(255, 230, 0, 0.26) 0%, rgba(255, 230, 0, 0.44) 100%)",
+      "box-shadow: inset 0 0 90px rgba(255, 230, 0, 0.85), inset 0 0 16px 4px rgba(255, 230, 0, 0.95)",
+      "opacity: 0",
+      "transition: opacity 120ms ease-out",
+    ].join("; ");
+
+    (document.body || document.documentElement).appendChild(overlay);
+
+    // Force layout before animating in, then fade out so total effect lasts ~1 second
+    void overlay.offsetWidth;
+    overlay.style.opacity = "1";
+
+    flashOverlayFadeTimeout = setTimeout(() => {
+      overlay.style.transition = "opacity 780ms ease-out";
+      overlay.style.opacity = "0";
+    }, 220);
+
+    flashOverlayRemoveTimeout = setTimeout(() => {
+      clearMeetYellowScreenFlash();
+    }, 1050);
+  } catch (err) {
+    console.warn("[OiU] Translucent flash overlay error:", err);
+  }
 }
 
 const messageListener = (message: any, _sender: any, sendResponse: (res?: any) => void) => {
   if (message?.type === "START_MEET_MONITORING") {
     startMonitoring();
     sendResponse({ success: true, monitoring: true });
+    return false;
+  }
+
+  if (message?.type === "PLAY_BACKGROUND_ALERT") {
+    playBackgroundAlertChime();
+    showMeetYellowScreenFlash();
+    sendResponse({ success: true });
+    return false;
+  }
+
+  if (message?.type === "SHOW_MEET_FLASH") {
+    showMeetYellowScreenFlash();
+    sendResponse({ success: true });
     return false;
   }
 
@@ -845,6 +952,7 @@ const messageListener = (message: any, _sender: any, sendResponse: (res?: any) =
 
   if (message?.type === "STOP_MEET_MONITORING") {
     stopMonitoring();
+    clearMeetYellowScreenFlash();
     sendResponse({ success: true, monitoring: false });
     return false;
   }
@@ -855,6 +963,7 @@ chrome.runtime.onMessage.addListener(messageListener);
 // Register instance cleanup hook so reinjections or updates never leave dangling listeners or intervals
 (window as any).__oiuCleanup = () => {
   stopMonitoring();
+  clearMeetYellowScreenFlash();
   try {
     chrome.runtime.onMessage.removeListener(messageListener);
   } catch {}

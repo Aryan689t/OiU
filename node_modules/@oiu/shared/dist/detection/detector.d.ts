@@ -29,7 +29,10 @@ export declare class EventDetector {
     private profile;
     private activeTurn;
     private alertedSentenceHashes;
+    private compiledNames;
+    private compiledKeywords;
     constructor(profile: UserProfile, _legacyCooldownMs?: number);
+    private compileProfileTargets;
     updateProfile(profile: UserProfile): void;
     resetHistory(): void;
     exportAlertedHashes(): [string, number][];

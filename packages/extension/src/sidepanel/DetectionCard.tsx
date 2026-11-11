@@ -65,38 +65,67 @@ export const DetectionCard: React.FC<DetectionCardProps> = ({
     return (
       <div
         style={{
-          backgroundColor: THEME.colors.bgSecondary,
-          border: `1px solid ${THEME.colors.border}`,
-          borderRadius: THEME.radius.lg,
-          padding: "24px 18px",
+          backgroundColor: THEME.colors.surface,
+          border: `1px solid #333338`,
+          borderRadius: THEME.radius.sm,
+          padding: "24px 20px",
           display: "flex",
           flexDirection: "column",
           alignItems: "center",
           justifyContent: "center",
           textAlign: "center",
-          margin: "12px 0 16px 0",
+          margin: "12px 0 18px 0",
+          boxSizing: "border-box",
+          boxShadow: "0 2px 14px rgba(0,0,0,0.4)",
         }}
       >
+        {/* Solid Inverted Yellow Tag */}
         <div
           style={{
-            width: "42px",
-            height: "42px",
-            borderRadius: "50%",
-            backgroundColor: THEME.colors.surface,
-            border: `1px solid ${THEME.colors.border}`,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            marginBottom: "12px",
+            display: "inline-block",
+            backgroundColor: THEME.colors.accentYellow,
+            color: "#000000",
+            padding: "3px 9px",
+            borderRadius: "2px",
+            fontFamily: THEME.typography.displayFont,
+            fontSize: "12px",
+            fontWeight: 800,
+            letterSpacing: "1px",
+            textTransform: "uppercase",
+            marginBottom: "10px",
           }}
         >
-          <BellIcon size={20} color={THEME.colors.textMuted} />
+          STANDBY // ACTIVE
         </div>
-        <div style={{ fontSize: "14px", fontWeight: 600, color: THEME.colors.textPrimary, marginBottom: "4px" }}>
-          Standing By
+
+        <div
+          style={{
+            fontSize: "20px",
+            fontWeight: 700,
+            fontFamily: THEME.typography.displayFont,
+            color: "#FFFFFF",
+            letterSpacing: "0.8px",
+            textTransform: "uppercase",
+            marginBottom: "8px",
+          }}
+        >
+          Monitoring for callouts
         </div>
-        <div style={{ fontSize: "12px", color: THEME.colors.textSecondary, maxWidth: "260px", lineHeight: 1.45 }}>
-          OiU is actively monitoring your meeting for your name, registration ID, or monitored keywords.
+
+        <div
+          style={{
+            fontSize: "13.5px",
+            fontFamily: THEME.typography.monoFamily,
+            color: "#E2E2E6",
+            maxWidth: "320px",
+            lineHeight: 1.6,
+            fontWeight: 600,
+          }}
+        >
+          WATCHING FOR: <span style={{ color: THEME.colors.accentYellow, fontWeight: 800 }}>{profile.displayName?.toUpperCase() || "NAME"}</span>
+          {profile.identifiers?.length > 0 ? (
+            <span style={{ color: THEME.colors.accentYellow, fontWeight: 800 }}> · #{profile.identifiers.join(", #")}</span>
+          ) : ""}
         </div>
       </div>
     );
@@ -152,191 +181,137 @@ export const DetectionCard: React.FC<DetectionCardProps> = ({
     <div
       style={{
         backgroundColor: THEME.colors.bgSecondary,
-        border: `1px solid ${THEME.colors.border}`,
-        borderRadius: THEME.radius.lg,
+        border: `1.5px solid ${THEME.colors.accentYellow}`,
+        borderRadius: THEME.radius.md,
         padding: "16px",
-        margin: "12px 0 16px 0",
+        margin: "10px 0 16px 0",
         position: "relative",
+        boxShadow: "0 0 20px rgba(255, 230, 0, 0.12)",
       }}
     >
-      {/* Top Header Row: Bell Squircle + Title + Play Action Button */}
+      {/* Top Header Row: Inverted Yellow Badge + Metadata + Play Action */}
       <div
         style={{
           display: "flex",
           alignItems: "flex-start",
           justifyContent: "space-between",
-          gap: "12px",
-          marginBottom: "14px",
+          gap: "10px",
+          marginBottom: "12px",
         }}
       >
-        <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
-          {/* Green-tinted squircle with bell icon matching reference */}
+        <div>
+          {/* Brutalist Inverted Tag with Tall Condensed Grotesque Display Font */}
           <div
             style={{
-              width: "42px",
-              height: "42px",
-              borderRadius: "12px",
-              backgroundColor: THEME.colors.greenMutedBg,
-              border: `1px solid ${THEME.colors.greenBorder}`,
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              flexShrink: 0,
+              display: "inline-block",
+              backgroundColor: THEME.colors.accentYellow,
+              color: "#000000",
+              fontSize: "12px",
+              fontFamily: THEME.typography.displayFont,
+              fontWeight: 700,
+              padding: "2px 8px 1px 8px",
+              borderRadius: "2px",
+              letterSpacing: "1px",
+              textTransform: "uppercase",
+              marginBottom: "6px",
+              lineHeight: 1.3,
             }}
           >
-            <BellIcon size={20} color={THEME.colors.accentGreen} />
+            {getAlertTitle()}
           </div>
 
-          <div>
-            <div
-              style={{
-                fontSize: "17px",
-                fontWeight: 700,
-                color: THEME.colors.textPrimary,
-                letterSpacing: "-0.2px",
-                lineHeight: 1.25,
-              }}
-            >
-              {getAlertTitle()}
-            </div>
-            <div
-              style={{
-                fontSize: "11px",
-                color: THEME.colors.textSecondary,
-                marginTop: "3px",
-                display: "flex",
-                alignItems: "center",
-                gap: "5px",
-              }}
-            >
-              <span>{relativeTime}</span>
-              <span>·</span>
-              <span>{confidenceScore}% confidence</span>
-              {currentAlertIndex > 0 && (
-                <span
-                  style={{
-                    backgroundColor: THEME.colors.surfaceHighlight,
-                    color: THEME.colors.accentAmber,
-                    padding: "1px 5px",
-                    borderRadius: THEME.radius.xs,
-                    fontSize: "10px",
-                    fontWeight: 600,
-                    marginLeft: "4px",
-                  }}
-                >
-                  Past #{currentAlertIndex + 1}
-                </span>
-              )}
-            </div>
+          <div
+            style={{
+              fontSize: "10.5px",
+              fontFamily: THEME.typography.monoFamily,
+              color: "#8E8E93",
+              letterSpacing: "0.4px",
+              textTransform: "uppercase",
+              display: "flex",
+              alignItems: "center",
+              gap: "6px",
+            }}
+          >
+            <span>{relativeTime.toUpperCase()}</span>
+            {currentAlertIndex > 0 && (
+              <span
+                style={{
+                  backgroundColor: THEME.colors.surfaceHighlight,
+                  color: THEME.colors.accentYellow,
+                  padding: "1px 5px",
+                  borderRadius: THEME.radius.xs,
+                  fontWeight: 700,
+                }}
+              >
+                #{currentAlertIndex + 1}
+              </span>
+            )}
           </div>
         </div>
 
         {/* Right Play & Dismiss Actions */}
-        <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
           <button
             onClick={onPlayChime}
             title="Replay alert chime"
             style={{
-              width: "36px",
-              height: "36px",
-              borderRadius: "50%",
-              backgroundColor: THEME.colors.accentGreen,
+              width: "32px",
+              height: "32px",
+              borderRadius: "3px",
+              backgroundColor: THEME.colors.accentYellow,
               border: "none",
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
               cursor: "pointer",
-              boxShadow: `0 2px 10px ${THEME.colors.greenGlow}`,
-              transition: "transform 0.12s ease, background-color 0.12s ease",
+              boxShadow: `0 0 10px ${THEME.colors.yellowGlow}`,
+              transition: "transform 0.1s ease",
             }}
           >
-            <PlaySolidIcon size={13} color="#090A0B" style={{ marginLeft: "2px" }} />
+            <PlaySolidIcon size={12} color="#000000" style={{ marginLeft: "1px" }} />
           </button>
           <button
             onClick={onDismissAlert}
             title="Dismiss & Silence Alert"
             style={{
               background: "none",
-              border: "none",
-              color: THEME.colors.textMuted,
+              border: `1px solid ${THEME.colors.border}`,
+              borderRadius: "3px",
+              color: THEME.colors.textSecondary,
               cursor: "pointer",
-              padding: "4px",
+              padding: "6px",
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
             }}
           >
-            <CloseIcon size={14} color={THEME.colors.textMuted} />
+            <CloseIcon size={12} color={THEME.colors.textSecondary} />
           </button>
         </div>
       </div>
 
-      {/* Transcript Evidence Quote (Green vertical line + Italic quote) */}
+      {/* Question / Callout Spotlight Box */}
       <div
         style={{
-          display: "flex",
-          alignItems: "stretch",
-          gap: "10px",
-          marginBottom: "14px",
+          backgroundColor: "#161618",
+          border: "1px solid #28282D",
+          borderRadius: "4px",
+          padding: "16px 18px",
+          marginBottom: "12px",
+          boxSizing: "border-box",
         }}
       >
         <div
           style={{
-            width: "3px",
-            backgroundColor: THEME.colors.accentGreen,
-            borderRadius: "2px",
-            flexShrink: 0,
+            fontFamily: THEME.typography.serifFont,
+            fontSize: "18px",
+            fontWeight: 500,
+            color: "#FFFFFF",
+            lineHeight: 1.55,
+            letterSpacing: "-0.1px",
           }}
-        />
-        <div style={{ flex: 1 }}>
-          <div
-            style={{
-              fontSize: "13.5px",
-              fontStyle: "italic",
-              fontWeight: 500,
-              color: THEME.colors.textPrimary,
-              lineHeight: 1.45,
-            }}
-          >
-            "{coreText || displayAlert.transcriptExcerpt}"
-          </div>
-
-          {/* Toggle raw caption if cleaned */}
-          {displayAlert.transcriptExcerpt !== coreText && (
-            <button
-              onClick={() => setShowRawCaption(!showRawCaption)}
-              style={{
-                background: "none",
-                border: "none",
-                color: THEME.colors.textSecondary,
-                fontSize: "10px",
-                cursor: "pointer",
-                padding: "4px 0 0 0",
-                textDecoration: "underline",
-              }}
-            >
-              {showRawCaption ? "Hide raw caption" : "View raw caption"}
-            </button>
-          )}
-
-          {showRawCaption && (
-            <div
-              style={{
-                marginTop: "6px",
-                padding: "6px 8px",
-                backgroundColor: THEME.colors.surface,
-                borderRadius: THEME.radius.sm,
-                fontSize: "11px",
-                color: THEME.colors.textSecondary,
-                fontStyle: "normal",
-                border: `1px solid ${THEME.colors.borderSubtle}`,
-                maxHeight: "60px",
-                overflowY: "auto",
-              }}
-            >
-              {displayAlert.transcriptExcerpt}
-            </div>
-          )}
+        >
+          "{coreText || displayAlert.transcriptExcerpt}"
         </div>
       </div>
 

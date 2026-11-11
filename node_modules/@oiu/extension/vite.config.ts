@@ -13,11 +13,10 @@ export default defineConfig({
         sidepanel: path.resolve(__dirname, "sidepanel.html"),
         offscreen: path.resolve(__dirname, "offscreen.html"),
         background: path.resolve(__dirname, "src/background/index.ts"),
-        content: path.resolve(__dirname, "src/content/index.ts"),
       },
       output: {
         entryFileNames: (chunkInfo) => {
-          if (chunkInfo.name === "background" || chunkInfo.name === "content") {
+          if (chunkInfo.name === "background") {
             return "[name].js";
           }
           return "assets/[name]-[hash].js";

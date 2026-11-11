@@ -4,23 +4,14 @@ import { THEME } from "./theme";
 import {
   ArrowLeftIcon,
   UserIcon,
-  HashIcon,
-  TagIcon,
-  LightningIcon,
-  ExternalLinkIcon,
   CheckIcon,
-  ZapIcon,
   MicrophoneIcon,
 } from "./icons";
-import { testGeminiApiKey } from "../services/aiService";
 import {
   GROQ_API_KEY_STORAGE,
   LISTENING_MODE_STORAGE,
   testGroqApiKey,
 } from "../audio/audioEngine";
-
-// Feature flag: Deactivate AI settings section for now as per user request
-const ENABLE_AI_SETTINGS = false;
 
 interface SettingsViewProps {
   profile: UserProfile;
@@ -37,35 +28,28 @@ interface SettingsViewProps {
   onClose: () => void;
 }
 
+type SettingsTab = "profile" | "audio" | "system";
+
 export const SettingsView: React.FC<SettingsViewProps> = ({
   profile,
-  geminiApiKey,
   onSaveProfile,
-  onSaveApiKey,
   onTestAlert,
   onPlayChime,
-  onTurnOnCaptions,
-  onKickstartCaptions,
   onResetSession,
   onClearTranscripts,
   onClearAlertsHistory,
   onClose,
 }) => {
-  // Profile state
+  // Navigation tab state
+  const [activeTab, setActiveTab] = useState<SettingsTab>("profile");
+
+  // Profile form state
   const [nameInput, setNameInput] = useState(profile.displayName || "");
   const [aliasesInput, setAliasesInput] = useState(formatCommaSeparatedList(profile.aliases));
   const [identifiersInput, setIdentifiersInput] = useState(formatCommaSeparatedList(profile.identifiers));
   const [keywordsInput, setKeywordsInput] = useState(formatCommaSeparatedList(profile.keywords || []));
   const [profileError, setProfileError] = useState<string | null>(null);
   const [profileSuccessMsg, setProfileSuccessMsg] = useState(false);
-  const [kickstartFeedback, setKickstartFeedback] = useState(false);
-
-  // API Key state
-  const [apiKeyInput, setApiKeyInput] = useState(geminiApiKey);
-  const [showApiKey, setShowApiKey] = useState(false);
-  const [apiSuccessMsg, setApiSuccessMsg] = useState(false);
-  const [isTestingApi, setIsTestingApi] = useState(false);
-  const [apiTestResult, setApiTestResult] = useState<{ success: boolean; message: string } | null>(null);
 
   // Pure Audio Engine & Groq Whisper state
   const [groqKeyInput, setGroqKeyInput] = useState("");
@@ -88,12 +72,33 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     }
   }, []);
 
+  const handleProfileSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    const newProfile: UserProfile = {
+      displayName: nameInput.trim(),
+      aliases: parseCommaSeparatedList(aliasesInput),
+      identifiers: parseCommaSeparatedList(identifiersInput),
+      keywords: parseCommaSeparatedList(keywordsInput),
+    };
+
+    const validation = validateProfile(newProfile);
+    if (!validation.valid) {
+      setProfileError(validation.errors[0]);
+      return;
+    }
+
+    setProfileError(null);
+    onSaveProfile(newProfile);
+    setProfileSuccessMsg(true);
+    setTimeout(() => setProfileSuccessMsg(false), 2400);
+  };
+
   const handleGroqSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (typeof chrome !== "undefined" && chrome.storage?.local) {
       chrome.storage.local.set({ [GROQ_API_KEY_STORAGE]: groqKeyInput.trim() }, () => {
         setGroqSuccessMsg(true);
-        setTimeout(() => setGroqSuccessMsg(false), 2200);
+        setTimeout(() => setGroqSuccessMsg(false), 2400);
       });
     }
   };
@@ -121,50 +126,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     }
   };
 
-  const handleProfileSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    const newProfile: UserProfile = {
-      displayName: nameInput.trim(),
-      aliases: parseCommaSeparatedList(aliasesInput),
-      identifiers: parseCommaSeparatedList(identifiersInput),
-      keywords: parseCommaSeparatedList(keywordsInput),
-    };
-
-    const validation = validateProfile(newProfile);
-    if (!validation.valid) {
-      setProfileError(validation.errors[0]);
-      return;
-    }
-
-    setProfileError(null);
-    onSaveProfile(newProfile);
-    setProfileSuccessMsg(true);
-    setTimeout(() => setProfileSuccessMsg(false), 2200);
-  };
-
-  const handleApiKeySubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    onSaveApiKey(apiKeyInput.trim());
-    setApiSuccessMsg(true);
-    setTimeout(() => setApiSuccessMsg(false), 2200);
-  };
-
-  const handleTestConnection = async () => {
-    setIsTestingApi(true);
-    setApiTestResult(null);
-    try {
-      const res = await testGeminiApiKey(apiKeyInput.trim());
-      setApiTestResult(res);
-      if (res.success) {
-        onSaveApiKey(apiKeyInput.trim());
-      }
-    } catch (e: any) {
-      setApiTestResult({ success: false, message: e?.message || "Test failed" });
-    } finally {
-      setIsTestingApi(false);
-    }
-  };
-
   return (
     <div
       style={{
@@ -174,100 +135,222 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
         backgroundColor: THEME.colors.bg,
         color: THEME.colors.textPrimary,
         boxSizing: "border-box",
-        padding: "16px",
+        padding: "20px 18px",
         overflowY: "auto",
+        fontFamily: THEME.typography.fontFamily,
       }}
     >
-      {/* Header with Back button */}
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: "12px",
-          paddingBottom: "14px",
-          borderBottom: `1px solid ${THEME.colors.border}`,
-          marginBottom: "18px",
-        }}
-      >
-        <button
-          onClick={onClose}
-          style={{
-            background: "none",
-            border: `1px solid ${THEME.colors.border}`,
-            borderRadius: THEME.radius.sm,
-            padding: "5px 8px",
-            color: THEME.colors.textPrimary,
-            cursor: "pointer",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            backgroundColor: THEME.colors.surface,
-          }}
-          title="Back to Assistant"
-        >
-          <ArrowLeftIcon size={14} color={THEME.colors.textPrimary} />
-        </button>
-        <div>
-          <div style={{ fontSize: "16px", fontWeight: 700, letterSpacing: "-0.2px" }}>Settings</div>
-          <div style={{ fontSize: "11px", color: THEME.colors.textSecondary }}>Preferences & Profile Configuration</div>
-        </div>
-      </div>
-
-      {/* SECTION 1: Profile & Target Identifiers */}
-      <div
-        style={{
-          backgroundColor: THEME.colors.bgSecondary,
-          border: `1px solid ${THEME.colors.border}`,
-          borderRadius: THEME.radius.lg,
-          padding: "16px",
-          marginBottom: "16px",
-        }}
-      >
-        <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "14px" }}>
-          <UserIcon size={16} color={THEME.colors.accentGreen} />
-          <span style={{ fontSize: "13.5px", fontWeight: 600 }}>Target Profile & Identifiers</span>
-        </div>
-
-        {profileSuccessMsg && (
-          <div
+      {/* 1. TOP HEADER & EDITORIAL TITLE (Matching "New York Philharmonic" brutalist/editorial aesthetic) */}
+      <div style={{ marginBottom: "20px" }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "16px" }}>
+          <button
+            onClick={onClose}
             style={{
-              padding: "7px 10px",
-              marginBottom: "12px",
-              backgroundColor: THEME.colors.greenMutedBg,
-              border: `1px solid ${THEME.colors.greenBorder}`,
+              background: "none",
+              border: `1px solid ${THEME.colors.border}`,
               borderRadius: THEME.radius.sm,
-              fontSize: "11.5px",
-              color: THEME.colors.accentGreen,
+              padding: "6px 12px",
+              color: THEME.colors.textSecondary,
+              cursor: "pointer",
               display: "flex",
               alignItems: "center",
               gap: "6px",
+              fontSize: "12px",
+              fontWeight: 500,
+              backgroundColor: THEME.colors.surface,
+              transition: "all 0.2s ease",
             }}
+            title="Return to live assistant"
           >
-            <CheckIcon size={14} color={THEME.colors.accentGreen} />
-            <span>Profile saved successfully!</span>
-          </div>
-        )}
+            <ArrowLeftIcon size={13} color={THEME.colors.textSecondary} />
+            <span>Back</span>
+          </button>
 
-        {profileError && (
-          <div
+          <span
             style={{
-              padding: "7px 10px",
-              marginBottom: "12px",
-              backgroundColor: THEME.colors.redMutedBg,
-              border: `1px solid ${THEME.colors.redBorder}`,
-              borderRadius: THEME.radius.sm,
-              fontSize: "11.5px",
-              color: THEME.colors.accentRed,
+              fontFamily: THEME.typography.monoFamily,
+              fontSize: "10.5px",
+              fontWeight: 600,
+              letterSpacing: "1px",
+              color: THEME.colors.accentYellow,
+              textTransform: "uppercase",
             }}
           >
-            {profileError}
-          </div>
-        )}
+            OiU v1.0
+          </span>
+        </div>
 
-        <form onSubmit={handleProfileSubmit}>
-          <div style={{ marginBottom: "12px" }}>
-            <label style={{ display: "block", fontSize: "11.5px", fontWeight: 500, color: THEME.colors.textSecondary, marginBottom: "5px" }}>
-              Display Name *
+        {/* Big Bold Headline in Oswald (Condensed Grotesque) */}
+        <h1
+          style={{
+            fontFamily: THEME.typography.displayFont,
+            fontSize: "28px",
+            fontWeight: 700,
+            letterSpacing: "0.5px",
+            textTransform: "uppercase",
+            lineHeight: 1.05,
+            color: "#FFFFFF",
+            margin: "0 0 6px 0",
+          }}
+        >
+          SETTINGS & PREFERENCES
+        </h1>
+
+        {/* Editorial Subtitle in Serif/Lora */}
+        <p
+          style={{
+            fontFamily: THEME.typography.serifFont,
+            fontSize: "13.5px",
+            lineHeight: 1.6,
+            color: THEME.colors.textSecondary,
+            margin: "0 0 14px 0",
+          }}
+        >
+          Configure your meeting identity, pure audio intelligence, and alert preferences.
+        </p>
+
+        {/* High-Contrast Cyber Yellow Accent Line (Matching reference Image 3) */}
+        <div
+          style={{
+            width: "100%",
+            height: "3px",
+            backgroundColor: THEME.colors.accentYellow,
+            borderRadius: "1px",
+          }}
+        />
+      </div>
+
+      {/* 2. MINIMALIST SEGMENTED NAVIGATION BAR */}
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "1fr 1fr 1fr",
+          gap: "4px",
+          backgroundColor: THEME.colors.surface,
+          padding: "3px",
+          borderRadius: THEME.radius.md,
+          border: `1px solid ${THEME.colors.border}`,
+          marginBottom: "24px",
+        }}
+      >
+        <button
+          type="button"
+          onClick={() => setActiveTab("profile")}
+          style={{
+            padding: "8px 6px",
+            borderRadius: THEME.radius.sm,
+            border: "none",
+            backgroundColor: activeTab === "profile" ? THEME.colors.bg : "transparent",
+            color: activeTab === "profile" ? THEME.colors.accentYellow : THEME.colors.textSecondary,
+            fontSize: "11px",
+            fontWeight: 700,
+            letterSpacing: "0.5px",
+            textTransform: "uppercase",
+            cursor: "pointer",
+            transition: "all 0.15s ease",
+            boxShadow: activeTab === "profile" ? "0 1px 3px rgba(0,0,0,0.5)" : "none",
+          }}
+        >
+          Profile
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setActiveTab("audio")}
+          style={{
+            padding: "8px 6px",
+            borderRadius: THEME.radius.sm,
+            border: "none",
+            backgroundColor: activeTab === "audio" ? THEME.colors.bg : "transparent",
+            color: activeTab === "audio" ? THEME.colors.accentYellow : THEME.colors.textSecondary,
+            fontSize: "11px",
+            fontWeight: 700,
+            letterSpacing: "0.5px",
+            textTransform: "uppercase",
+            cursor: "pointer",
+            transition: "all 0.15s ease",
+            boxShadow: activeTab === "audio" ? "0 1px 3px rgba(0,0,0,0.5)" : "none",
+          }}
+        >
+          Audio AI
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setActiveTab("system")}
+          style={{
+            padding: "8px 6px",
+            borderRadius: THEME.radius.sm,
+            border: "none",
+            backgroundColor: activeTab === "system" ? THEME.colors.bg : "transparent",
+            color: activeTab === "system" ? THEME.colors.accentYellow : THEME.colors.textSecondary,
+            fontSize: "11px",
+            fontWeight: 700,
+            letterSpacing: "0.5px",
+            textTransform: "uppercase",
+            cursor: "pointer",
+            transition: "all 0.15s ease",
+            boxShadow: activeTab === "system" ? "0 1px 3px rgba(0,0,0,0.5)" : "none",
+          }}
+        >
+          System
+        </button>
+      </div>
+
+      {/* 3. TAB CONTENT */}
+
+      {/* === TAB 1: PROFILE & IDENTITY === */}
+      {activeTab === "profile" && (
+        <form onSubmit={handleProfileSubmit} style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
+          {profileSuccessMsg && (
+            <div
+              style={{
+                padding: "10px 14px",
+                backgroundColor: THEME.colors.yellowMutedBg,
+                border: `1px solid ${THEME.colors.yellowBorder}`,
+                borderRadius: THEME.radius.sm,
+                fontSize: "12px",
+                fontWeight: 600,
+                color: THEME.colors.accentYellow,
+                display: "flex",
+                alignItems: "center",
+                gap: "8px",
+              }}
+            >
+              <CheckIcon size={14} color={THEME.colors.accentYellow} />
+              <span>Profile updated successfully</span>
+            </div>
+          )}
+
+          {profileError && (
+            <div
+              style={{
+                padding: "10px 14px",
+                backgroundColor: THEME.colors.redMutedBg,
+                border: `1px solid ${THEME.colors.redBorder}`,
+                borderRadius: THEME.radius.sm,
+                fontSize: "12px",
+                color: THEME.colors.accentRed,
+              }}
+            >
+              {profileError}
+            </div>
+          )}
+
+          {/* Display Name */}
+          <div>
+            <label
+              style={{
+                display: "block",
+                fontSize: "11px",
+                fontWeight: 700,
+                letterSpacing: "0.8px",
+                textTransform: "uppercase",
+                color: THEME.colors.textSecondary,
+                marginBottom: "6px",
+              }}
+            >
+              Display Name <span style={{ color: THEME.colors.accentYellow }}>*</span>
             </label>
             <input
               type="text"
@@ -276,222 +359,339 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               onChange={(e) => setNameInput(e.target.value)}
               style={{
                 width: "100%",
-                padding: "8px 10px",
+                padding: "12px 14px",
                 backgroundColor: THEME.colors.surface,
                 border: `1px solid ${THEME.colors.border}`,
                 borderRadius: THEME.radius.sm,
-                fontSize: "13px",
-                color: THEME.colors.textPrimary,
+                fontSize: "14px",
+                color: "#FFFFFF",
                 boxSizing: "border-box",
                 outline: "none",
+                transition: "border-color 0.2s ease",
               }}
+              onFocus={(e) => (e.target.style.borderColor = THEME.colors.accentYellow)}
+              onBlur={(e) => (e.target.style.borderColor = THEME.colors.border)}
             />
+            <div style={{ fontSize: "11px", color: THEME.colors.textMuted, marginTop: "5px" }}>
+              Your exact name as spoken by hosts and professors.
+            </div>
           </div>
 
-          <div style={{ marginBottom: "12px" }}>
-            <label style={{ display: "block", fontSize: "11.5px", fontWeight: 500, color: THEME.colors.textSecondary, marginBottom: "5px" }}>
-              Phonetic Aliases (comma-separated)
+          {/* Phonetic Aliases */}
+          <div>
+            <label
+              style={{
+                display: "block",
+                fontSize: "11px",
+                fontWeight: 700,
+                letterSpacing: "0.8px",
+                textTransform: "uppercase",
+                color: THEME.colors.textSecondary,
+                marginBottom: "6px",
+              }}
+            >
+              Phonetic Aliases
             </label>
             <input
               type="text"
-              placeholder="e.g. Ari, Aryan S, Tathagat"
+              placeholder="e.g. Ari, Tathagat, vansh"
               value={aliasesInput}
               onChange={(e) => setAliasesInput(e.target.value)}
               style={{
                 width: "100%",
-                padding: "8px 10px",
+                padding: "12px 14px",
                 backgroundColor: THEME.colors.surface,
                 border: `1px solid ${THEME.colors.border}`,
                 borderRadius: THEME.radius.sm,
-                fontSize: "13px",
-                color: THEME.colors.textPrimary,
+                fontSize: "13.5px",
+                color: "#FFFFFF",
                 boxSizing: "border-box",
                 outline: "none",
+                transition: "border-color 0.2s ease",
               }}
+              onFocus={(e) => (e.target.style.borderColor = THEME.colors.accentYellow)}
+              onBlur={(e) => (e.target.style.borderColor = THEME.colors.border)}
             />
-            <div style={{ fontSize: "10px", color: THEME.colors.textMuted, marginTop: "4px" }}>
-              Handles common speech-to-text variations of your name.
+            <div style={{ fontSize: "11px", color: THEME.colors.textMuted, marginTop: "5px" }}>
+              Alternative spellings or nicknames (comma-separated).
             </div>
           </div>
 
-          <div style={{ marginBottom: "12px" }}>
-            <label style={{ display: "block", fontSize: "11.5px", fontWeight: 500, color: THEME.colors.textSecondary, marginBottom: "5px" }}>
-              Registration / Employee IDs (comma-separated)
+          {/* Registration / Roll IDs */}
+          <div>
+            <label
+              style={{
+                display: "block",
+                fontSize: "11px",
+                fontWeight: 700,
+                letterSpacing: "0.8px",
+                textTransform: "uppercase",
+                color: THEME.colors.textSecondary,
+                marginBottom: "6px",
+              }}
+            >
+              Registration / Roll IDs
             </label>
             <input
               type="text"
-              placeholder="e.g. 117, 10325210117, EMP-402"
+              placeholder="e.g. 117, 10325210117"
               value={identifiersInput}
               onChange={(e) => setIdentifiersInput(e.target.value)}
               style={{
                 width: "100%",
-                padding: "8px 10px",
+                padding: "12px 14px",
                 backgroundColor: THEME.colors.surface,
                 border: `1px solid ${THEME.colors.border}`,
                 borderRadius: THEME.radius.sm,
-                fontSize: "13px",
-                color: THEME.colors.textPrimary,
+                fontSize: "13.5px",
                 fontFamily: THEME.typography.monoFamily,
+                color: "#FFFFFF",
                 boxSizing: "border-box",
                 outline: "none",
+                transition: "border-color 0.2s ease",
               }}
+              onFocus={(e) => (e.target.style.borderColor = THEME.colors.accentYellow)}
+              onBlur={(e) => (e.target.style.borderColor = THEME.colors.border)}
             />
+            <div style={{ fontSize: "11px", color: THEME.colors.textMuted, marginTop: "5px" }}>
+              Identifiers spoken during roll calls or attendance.
+            </div>
           </div>
 
-          <div style={{ marginBottom: "16px" }}>
-            <label style={{ display: "block", fontSize: "11.5px", fontWeight: 500, color: THEME.colors.textSecondary, marginBottom: "5px" }}>
-              Custom Alert Keywords (comma-separated)
+          {/* Custom Keywords */}
+          <div>
+            <label
+              style={{
+                display: "block",
+                fontSize: "11px",
+                fontWeight: 700,
+                letterSpacing: "0.8px",
+                textTransform: "uppercase",
+                color: THEME.colors.textSecondary,
+                marginBottom: "6px",
+              }}
+            >
+              Custom Alert Keywords
             </label>
             <input
               type="text"
-              placeholder="e.g. quarterly budget, project titan, architecture"
+              placeholder="e.g. Attendance, Project Titan, Viva"
               value={keywordsInput}
               onChange={(e) => setKeywordsInput(e.target.value)}
               style={{
                 width: "100%",
-                padding: "8px 10px",
+                padding: "12px 14px",
                 backgroundColor: THEME.colors.surface,
                 border: `1px solid ${THEME.colors.border}`,
                 borderRadius: THEME.radius.sm,
-                fontSize: "13px",
-                color: THEME.colors.textPrimary,
+                fontSize: "13.5px",
+                color: "#FFFFFF",
                 boxSizing: "border-box",
                 outline: "none",
+                transition: "border-color 0.2s ease",
               }}
+              onFocus={(e) => (e.target.style.borderColor = THEME.colors.accentYellow)}
+              onBlur={(e) => (e.target.style.borderColor = THEME.colors.border)}
             />
-            <div style={{ fontSize: "10px", color: THEME.colors.textMuted, marginTop: "4px" }}>
-              OiU monitors meeting speech and alerts you if any of these topics are asked or mentioned.
+            <div style={{ fontSize: "11px", color: THEME.colors.textMuted, marginTop: "5px" }}>
+              Key topics that trigger immediate alerts when spoken.
             </div>
           </div>
 
+          {/* Save Button */}
           <button
             type="submit"
             style={{
+              marginTop: "8px",
               width: "100%",
-              padding: "9px 14px",
-              backgroundColor: THEME.colors.surfaceHighlight,
-              border: `1px solid ${THEME.colors.borderActive}`,
-              borderRadius: THEME.radius.md,
-              color: THEME.colors.textPrimary,
-              fontSize: "12.5px",
-              fontWeight: 600,
+              padding: "13px 18px",
+              backgroundColor: THEME.colors.accentYellow,
+              border: "none",
+              borderRadius: THEME.radius.sm,
+              color: "#000000",
+              fontSize: "13px",
+              fontWeight: 800,
+              letterSpacing: "0.8px",
+              textTransform: "uppercase",
               cursor: "pointer",
+              transition: "all 0.2s ease",
             }}
           >
             Save Profile Changes
           </button>
         </form>
-      </div>
+      )}
 
-      {/* SECTION 2: AI Answer Engine (Deactivated as per user request - focusing 100% on the alert engine) */}
-      {ENABLE_AI_SETTINGS && (
-        <div
-          style={{
-            backgroundColor: THEME.colors.bgSecondary,
-            border: `1px solid ${THEME.colors.border}`,
-            borderRadius: THEME.radius.lg,
-            padding: "16px",
-            marginBottom: "16px",
-          }}
-        >
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "10px" }}>
-            <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-              <LightningIcon size={16} color={THEME.colors.accentGreen} />
-              <span style={{ fontSize: "13.5px", fontWeight: 600 }}>AI Answer Engine (Gemini Flash)</span>
+      {/* === TAB 2: AUDIO ENGINE (GROQ WHISPER) === */}
+      {activeTab === "audio" && (
+        <div style={{ display: "flex", flexDirection: "column", gap: "22px" }}>
+          <div>
+            <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "4px" }}>
+              <MicrophoneIcon size={16} color={THEME.colors.accentYellow} />
+              <span
+                style={{
+                  fontFamily: THEME.typography.displayFont,
+                  fontSize: "18px",
+                  fontWeight: 700,
+                  letterSpacing: "0.5px",
+                  textTransform: "uppercase",
+                }}
+              >
+                Pure Audio Intelligence
+              </span>
             </div>
-            <span
+            <p
               style={{
-                fontSize: "10px",
-                fontWeight: 700,
-                padding: "2px 6px",
-                borderRadius: THEME.radius.xs,
-                backgroundColor: geminiApiKey ? THEME.colors.greenMutedBg : THEME.colors.surface,
-                color: geminiApiKey ? THEME.colors.accentGreen : THEME.colors.textSecondary,
-                border: `1px solid ${geminiApiKey ? THEME.colors.greenBorder : THEME.colors.border}`,
+                fontFamily: THEME.typography.serifFont,
+                fontSize: "13px",
+                lineHeight: 1.6,
+                color: THEME.colors.textSecondary,
+                margin: 0,
               }}
             >
-              {geminiApiKey ? "ACTIVE" : "OPTIONAL"}
-            </span>
+              Listens directly to incoming meeting audio via Groq Whisper Large V3. Completely independent of Google Meet captions.
+            </p>
           </div>
 
-          <p style={{ margin: "0 0 12px 0", fontSize: "11.5px", color: THEME.colors.textSecondary, lineHeight: 1.45 }}>
-            Generates deep, factual answers to direct questions using Google Gemini Flash.
-          </p>
-
-          {apiSuccessMsg && (
-            <div
+          {/* Listening Mode Selector */}
+          <div>
+            <label
               style={{
-                padding: "7px 10px",
-                marginBottom: "12px",
-                backgroundColor: THEME.colors.greenMutedBg,
-                border: `1px solid ${THEME.colors.greenBorder}`,
-                borderRadius: THEME.radius.sm,
-                fontSize: "11.5px",
-                color: THEME.colors.accentGreen,
-                display: "flex",
-                alignItems: "center",
-                gap: "6px",
+                display: "block",
+                fontSize: "11px",
+                fontWeight: 700,
+                letterSpacing: "0.8px",
+                textTransform: "uppercase",
+                color: THEME.colors.textSecondary,
+                marginBottom: "8px",
               }}
             >
-              <CheckIcon size={14} color={THEME.colors.accentGreen} />
-              <span>API Key saved securely!</span>
-            </div>
-          )}
+              Listening Mode
+            </label>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px" }}>
+              <button
+                type="button"
+                onClick={() => handleModeChange("audio_only")}
+                style={{
+                  padding: "12px 14px",
+                  borderRadius: THEME.radius.sm,
+                  backgroundColor: listeningMode === "audio_only" ? THEME.colors.yellowMutedBg : THEME.colors.surface,
+                  border: `1px solid ${listeningMode === "audio_only" ? THEME.colors.accentYellow : THEME.colors.border}`,
+                  color: listeningMode === "audio_only" ? THEME.colors.accentYellow : THEME.colors.textSecondary,
+                  fontSize: "12.5px",
+                  fontWeight: 700,
+                  cursor: "pointer",
+                  textAlign: "left",
+                  transition: "all 0.15s ease",
+                }}
+              >
+                <div>🎤 Pure Audio</div>
+                <div style={{ fontSize: "10.5px", fontWeight: 400, opacity: 0.8, marginTop: "3px" }}>
+                  Zero Captions · 100% Invisible
+                </div>
+              </button>
 
-          {apiTestResult && (
-            <div
-              style={{
-                padding: "8px 12px",
-                marginBottom: "12px",
-                backgroundColor: apiTestResult.success ? THEME.colors.greenMutedBg : "rgba(239, 68, 68, 0.12)",
-                border: `1px solid ${apiTestResult.success ? THEME.colors.greenBorder : "rgba(239, 68, 68, 0.4)"}`,
-                borderRadius: THEME.radius.sm,
-                fontSize: "11.5px",
-                color: apiTestResult.success ? THEME.colors.accentGreen : "#FCA5A5",
-                display: "flex",
-                alignItems: "center",
-                gap: "6px",
-              }}
-            >
-              {apiTestResult.success ? (
-                <CheckIcon size={14} color={THEME.colors.accentGreen} />
-              ) : (
-                <span>⚠️</span>
-              )}
-              <span>{apiTestResult.message}</span>
+              <button
+                type="button"
+                onClick={() => handleModeChange("dual")}
+                style={{
+                  padding: "12px 14px",
+                  borderRadius: THEME.radius.sm,
+                  backgroundColor: listeningMode === "dual" ? THEME.colors.yellowMutedBg : THEME.colors.surface,
+                  border: `1px solid ${listeningMode === "dual" ? THEME.colors.accentYellow : THEME.colors.border}`,
+                  color: listeningMode === "dual" ? THEME.colors.accentYellow : THEME.colors.textSecondary,
+                  fontSize: "12.5px",
+                  fontWeight: 700,
+                  cursor: "pointer",
+                  textAlign: "left",
+                  transition: "all 0.15s ease",
+                }}
+              >
+                <div>✨ Dual Mode</div>
+                <div style={{ fontSize: "10.5px", fontWeight: 400, opacity: 0.8, marginTop: "3px" }}>
+                  Audio + Captions Companion
+                </div>
+              </button>
             </div>
-          )}
+          </div>
 
-          <form onSubmit={handleApiKeySubmit}>
-            <div style={{ marginBottom: "10px" }}>
-              <label style={{ display: "block", fontSize: "11.5px", fontWeight: 500, color: THEME.colors.textSecondary, marginBottom: "5px" }}>
-                Google Gemini API Key
+          {/* Groq API Key Form */}
+          <form onSubmit={handleGroqSubmit} style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
+            {groqSuccessMsg && (
+              <div
+                style={{
+                  padding: "10px 14px",
+                  backgroundColor: THEME.colors.yellowMutedBg,
+                  border: `1px solid ${THEME.colors.yellowBorder}`,
+                  borderRadius: THEME.radius.sm,
+                  fontSize: "12px",
+                  color: THEME.colors.accentYellow,
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "8px",
+                }}
+              >
+                <CheckIcon size={14} color={THEME.colors.accentYellow} />
+                <span>Groq API Key saved successfully</span>
+              </div>
+            )}
+
+            {groqTestResult && (
+              <div
+                style={{
+                  padding: "10px 14px",
+                  backgroundColor: groqTestResult.success ? THEME.colors.yellowMutedBg : THEME.colors.redMutedBg,
+                  border: `1px solid ${groqTestResult.success ? THEME.colors.yellowBorder : THEME.colors.redBorder}`,
+                  borderRadius: THEME.radius.sm,
+                  fontSize: "12px",
+                  color: groqTestResult.success ? THEME.colors.accentYellow : THEME.colors.accentRed,
+                }}
+              >
+                {groqTestResult.message}
+              </div>
+            )}
+
+            <div>
+              <label
+                style={{
+                  display: "block",
+                  fontSize: "11px",
+                  fontWeight: 700,
+                  letterSpacing: "0.8px",
+                  textTransform: "uppercase",
+                  color: THEME.colors.textSecondary,
+                  marginBottom: "6px",
+                }}
+              >
+                Groq API Key (Whisper Large V3 Turbo)
               </label>
               <div style={{ position: "relative" }}>
                 <input
-                  type={showApiKey ? "text" : "password"}
-                  placeholder="AIzaSy..."
-                  value={apiKeyInput}
-                  onChange={(e) => setApiKeyInput(e.target.value)}
+                  type={showGroqKey ? "text" : "password"}
+                  placeholder="gsk_..."
+                  value={groqKeyInput}
+                  onChange={(e) => setGroqKeyInput(e.target.value)}
                   style={{
                     width: "100%",
-                    padding: "8px 60px 8px 10px",
+                    padding: "12px 60px 12px 14px",
                     backgroundColor: THEME.colors.surface,
                     border: `1px solid ${THEME.colors.border}`,
                     borderRadius: THEME.radius.sm,
-                    fontSize: "12.5px",
-                    color: THEME.colors.textPrimary,
+                    fontSize: "13px",
+                    color: "#FFFFFF",
                     fontFamily: THEME.typography.monoFamily,
                     boxSizing: "border-box",
                     outline: "none",
                   }}
+                  onFocus={(e) => (e.target.style.borderColor = THEME.colors.accentYellow)}
+                  onBlur={(e) => (e.target.style.borderColor = THEME.colors.border)}
                 />
                 <button
                   type="button"
-                  onClick={() => setShowApiKey(!showApiKey)}
+                  onClick={() => setShowGroqKey(!showGroqKey)}
                   style={{
                     position: "absolute",
-                    right: "8px",
+                    right: "10px",
                     top: "50%",
                     transform: "translateY(-50%)",
                     background: "none",
@@ -502,60 +702,57 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                     padding: "4px",
                   }}
                 >
-                  {showApiKey ? "Hide" : "Show"}
+                  {showGroqKey ? "Hide" : "Show"}
                 </button>
               </div>
-              <div style={{ marginTop: "6px", fontSize: "11px", color: THEME.colors.textSecondary }}>
-                Don't have a key?{" "}
+
+              <div style={{ marginTop: "6px", fontSize: "11px", color: THEME.colors.textMuted }}>
+                100% Free ·{" "}
                 <a
-                  href="https://aistudio.google.com/apikey"
+                  href="https://console.groq.com/keys"
                   target="_blank"
                   rel="noreferrer"
-                  style={{ color: THEME.colors.accentGreen, textDecoration: "none", fontWeight: 600, display: "inline-flex", alignItems: "center", gap: "2px" }}
+                  style={{ color: THEME.colors.accentYellow, textDecoration: "none", fontWeight: 600 }}
                 >
-                  <span>Get free key at Google AI Studio</span>
-                  <ExternalLinkIcon size={10} color={THEME.colors.accentGreen} />
+                  Get free Groq key in 10s (No card required) ↗
                 </a>
               </div>
             </div>
 
-            <div style={{ display: "flex", gap: "8px" }}>
+            <div style={{ display: "flex", gap: "10px" }}>
               <button
                 type="button"
-                onClick={handleTestConnection}
-                disabled={isTestingApi || !apiKeyInput.trim()}
+                disabled={isTestingGroq || !groqKeyInput.trim()}
+                onClick={handleTestGroq}
                 style={{
                   flex: 1,
-                  padding: "9px 12px",
-                  backgroundColor: THEME.colors.greenMutedBg,
-                  border: `1px solid ${THEME.colors.greenBorder}`,
-                  borderRadius: THEME.radius.md,
-                  color: THEME.colors.accentGreen,
+                  padding: "11px 14px",
+                  backgroundColor: THEME.colors.surface,
+                  border: `1px solid ${THEME.colors.border}`,
+                  borderRadius: THEME.radius.sm,
+                  color: "#FFFFFF",
                   fontSize: "12px",
                   fontWeight: 600,
-                  cursor: isTestingApi || !apiKeyInput.trim() ? "not-allowed" : "pointer",
-                  opacity: isTestingApi || !apiKeyInput.trim() ? 0.6 : 1,
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  gap: "5px",
+                  cursor: isTestingGroq || !groqKeyInput.trim() ? "not-allowed" : "pointer",
+                  opacity: isTestingGroq || !groqKeyInput.trim() ? 0.5 : 1,
                 }}
               >
-                <LightningIcon size={13} color={THEME.colors.accentGreen} />
-                <span>{isTestingApi ? "Testing..." : "Test AI"}</span>
+                {isTestingGroq ? "Testing..." : "Test Connection"}
               </button>
 
               <button
                 type="submit"
                 style={{
                   flex: 1,
-                  padding: "9px 12px",
-                  backgroundColor: THEME.colors.surfaceHighlight,
-                  border: `1px solid ${THEME.colors.borderActive}`,
-                  borderRadius: THEME.radius.md,
-                  color: THEME.colors.textPrimary,
+                  padding: "11px 14px",
+                  backgroundColor: THEME.colors.accentYellow,
+                  border: "none",
+                  borderRadius: THEME.radius.sm,
+                  color: "#000000",
                   fontSize: "12px",
-                  fontWeight: 600,
+                  fontWeight: 800,
+                  letterSpacing: "0.5px",
+                  textTransform: "uppercase",
                   cursor: "pointer",
                 }}
               >
@@ -566,390 +763,137 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
         </div>
       )}
 
-      {/* SECTION: Speech & Audio Engine (Groq Whisper Large V3 - Zero Captions) */}
-      <div
-        style={{
-          backgroundColor: THEME.colors.bgSecondary,
-          border: `1px solid ${THEME.colors.border}`,
-          borderRadius: THEME.radius.lg,
-          padding: "16px",
-          marginBottom: "16px",
-        }}
-      >
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "8px" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-            <MicrophoneIcon size={16} color={THEME.colors.accentGreen} />
-            <span style={{ fontSize: "13.5px", fontWeight: 600 }}>Pure Audio Engine (Groq Whisper)</span>
-          </div>
-          <span
-            style={{
-              fontSize: "10px",
-              fontWeight: 700,
-              padding: "2px 6px",
-              borderRadius: THEME.radius.xs,
-              backgroundColor: groqKeyInput ? THEME.colors.greenMutedBg : THEME.colors.surface,
-              color: groqKeyInput ? THEME.colors.accentGreen : THEME.colors.textSecondary,
-              border: `1px solid ${groqKeyInput ? THEME.colors.greenBorder : THEME.colors.border}`,
-            }}
-          >
-            {groqKeyInput ? "GROQ ACTIVE" : "FREE BACKUP"}
-          </span>
-        </div>
-
-        <p style={{ margin: "0 0 12px 0", fontSize: "11.5px", color: THEME.colors.textSecondary, lineHeight: 1.45 }}>
-          Listens directly to live meeting sound using Groq's high-speed Whisper Large V3 Turbo model. Completely independent of Google Meet captions.
-        </p>
-
-        {/* Listening Mode Toggle */}
-        <div style={{ marginBottom: "14px" }}>
-          <label style={{ display: "block", fontSize: "11px", fontWeight: 600, color: THEME.colors.textSecondary, marginBottom: "6px" }}>
-            LISTENING MODE
-          </label>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "6px" }}>
-            <button
-              type="button"
-              onClick={() => handleModeChange("audio_only")}
+      {/* === TAB 3: SYSTEM & DIAGNOSTICS === */}
+      {activeTab === "system" && (
+        <div style={{ display: "flex", flexDirection: "column", gap: "18px" }}>
+          <div>
+            <span
               style={{
-                padding: "8px 10px",
-                borderRadius: THEME.radius.sm,
-                backgroundColor: listeningMode === "audio_only" ? THEME.colors.greenMutedBg : THEME.colors.surface,
-                border: `1px solid ${listeningMode === "audio_only" ? THEME.colors.greenBorder : THEME.colors.border}`,
-                color: listeningMode === "audio_only" ? THEME.colors.accentGreen : THEME.colors.textSecondary,
-                fontSize: "11.5px",
-                fontWeight: 600,
-                cursor: "pointer",
-                textAlign: "center",
+                fontFamily: THEME.typography.displayFont,
+                fontSize: "18px",
+                fontWeight: 700,
+                letterSpacing: "0.5px",
+                textTransform: "uppercase",
               }}
             >
-              🎤 Pure Audio
-              <div style={{ fontSize: "9.5px", fontWeight: 400, opacity: 0.85, marginTop: "2px" }}>Zero Meet Captions</div>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => handleModeChange("dual")}
+              System Verification & Maintenance
+            </span>
+            <p
               style={{
-                padding: "8px 10px",
-                borderRadius: THEME.radius.sm,
-                backgroundColor: listeningMode === "dual" ? THEME.colors.greenMutedBg : THEME.colors.surface,
-                border: `1px solid ${listeningMode === "dual" ? THEME.colors.greenBorder : THEME.colors.border}`,
-                color: listeningMode === "dual" ? THEME.colors.accentGreen : THEME.colors.textSecondary,
-                fontSize: "11.5px",
-                fontWeight: 600,
-                cursor: "pointer",
-                textAlign: "center",
+                fontFamily: THEME.typography.serifFont,
+                fontSize: "13px",
+                lineHeight: 1.6,
+                color: THEME.colors.textSecondary,
+                margin: "4px 0 0 0",
               }}
             >
-              ✨ Dual Mode
-              <div style={{ fontSize: "9.5px", fontWeight: 400, opacity: 0.85, marginTop: "2px" }}>Audio + Captions</div>
-            </button>
-          </div>
-        </div>
-
-        {groqSuccessMsg && (
-          <div
-            style={{
-              padding: "7px 10px",
-              marginBottom: "12px",
-              backgroundColor: THEME.colors.greenMutedBg,
-              border: `1px solid ${THEME.colors.greenBorder}`,
-              borderRadius: THEME.radius.sm,
-              fontSize: "11.5px",
-              color: THEME.colors.accentGreen,
-              display: "flex",
-              alignItems: "center",
-              gap: "6px",
-            }}
-          >
-            <CheckIcon size={14} color={THEME.colors.accentGreen} />
-            <span>Groq API Key saved successfully!</span>
-          </div>
-        )}
-
-        {groqTestResult && (
-          <div
-            style={{
-              padding: "8px 12px",
-              marginBottom: "12px",
-              backgroundColor: groqTestResult.success ? THEME.colors.greenMutedBg : "rgba(239, 68, 68, 0.12)",
-              border: `1px solid ${groqTestResult.success ? THEME.colors.greenBorder : "rgba(239, 68, 68, 0.4)"}`,
-              borderRadius: THEME.radius.sm,
-              fontSize: "11.5px",
-              color: groqTestResult.success ? THEME.colors.accentGreen : "#FCA5A5",
-              display: "flex",
-              alignItems: "center",
-              gap: "6px",
-            }}
-          >
-            {groqTestResult.success ? (
-              <CheckIcon size={14} color={THEME.colors.accentGreen} />
-            ) : (
-              <span>⚠️</span>
-            )}
-            <span>{groqTestResult.message}</span>
-          </div>
-        )}
-
-        <form onSubmit={handleGroqSubmit}>
-          <div style={{ marginBottom: "10px" }}>
-            <label style={{ display: "block", fontSize: "11.5px", fontWeight: 500, color: THEME.colors.textSecondary, marginBottom: "5px" }}>
-              Groq API Key (100% Free · Whisper Large V3)
-            </label>
-            <div style={{ position: "relative" }}>
-              <input
-                type={showGroqKey ? "text" : "password"}
-                placeholder="gsk_..."
-                value={groqKeyInput}
-                onChange={(e) => setGroqKeyInput(e.target.value)}
-                style={{
-                  width: "100%",
-                  padding: "8px 60px 8px 10px",
-                  backgroundColor: THEME.colors.surface,
-                  border: `1px solid ${THEME.colors.border}`,
-                  borderRadius: THEME.radius.sm,
-                  fontSize: "12px",
-                  color: THEME.colors.textPrimary,
-                  fontFamily: THEME.typography.monoFamily,
-                  boxSizing: "border-box",
-                  outline: "none",
-                }}
-              />
-              <button
-                type="button"
-                onClick={() => setShowGroqKey(!showGroqKey)}
-                style={{
-                  position: "absolute",
-                  right: "8px",
-                  top: "50%",
-                  transform: "translateY(-50%)",
-                  background: "none",
-                  border: "none",
-                  color: THEME.colors.textSecondary,
-                  fontSize: "11px",
-                  cursor: "pointer",
-                  padding: "4px",
-                }}
-              >
-                {showGroqKey ? "Hide" : "Show"}
-              </button>
-            </div>
-            <div style={{ marginTop: "6px", fontSize: "11px", color: THEME.colors.textSecondary }}>
-              Don't have a free key?{" "}
-              <a
-                href="https://console.groq.com/keys"
-                target="_blank"
-                rel="noreferrer"
-                style={{ color: THEME.colors.accentGreen, textDecoration: "none" }}
-              >
-                Get one free in 10s (No card needed) ↗
-              </a>
-            </div>
+              Verify audio synthesizers, trigger synthetic alerts, or purge cached meeting transcripts.
+            </p>
           </div>
 
-          <div style={{ display: "flex", gap: "8px" }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
             <button
               type="button"
-              disabled={isTestingGroq || !groqKeyInput.trim()}
-              onClick={handleTestGroq}
+              onClick={onPlayChime}
               style={{
-                flex: 1,
-                padding: "8px 12px",
+                padding: "14px 16px",
                 backgroundColor: THEME.colors.surface,
                 border: `1px solid ${THEME.colors.border}`,
-                borderRadius: THEME.radius.md,
-                color: THEME.colors.textPrimary,
-                fontSize: "11.5px",
-                fontWeight: 500,
-                cursor: isTestingGroq || !groqKeyInput.trim() ? "not-allowed" : "pointer",
-                opacity: isTestingGroq || !groqKeyInput.trim() ? 0.6 : 1,
+                borderRadius: THEME.radius.sm,
+                color: "#FFFFFF",
+                fontSize: "13px",
+                cursor: "pointer",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                textAlign: "left",
               }}
             >
-              {isTestingGroq ? "Testing..." : "Test Groq"}
+              <span>Test Audio Chime Synthesizer</span>
+              <span style={{ color: THEME.colors.accentYellow, fontWeight: 700 }}>Play ♫</span>
             </button>
 
             <button
-              type="submit"
+              type="button"
+              onClick={onTestAlert}
               style={{
-                flex: 1,
-                padding: "8px 12px",
-                backgroundColor: THEME.colors.surfaceHighlight,
-                border: `1px solid ${THEME.colors.borderActive}`,
-                borderRadius: THEME.radius.md,
-                color: THEME.colors.textPrimary,
-                fontSize: "11.5px",
-                fontWeight: 600,
+                padding: "14px 16px",
+                backgroundColor: THEME.colors.surface,
+                border: `1px solid ${THEME.colors.border}`,
+                borderRadius: THEME.radius.sm,
+                color: "#FFFFFF",
+                fontSize: "13px",
                 cursor: "pointer",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                textAlign: "left",
               }}
             >
-              Save Groq Key
+              <span>Trigger Synthetic Mention Alert</span>
+              <span style={{ color: THEME.colors.accentYellow, fontWeight: 700 }}>Trigger</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={onClearTranscripts}
+              style={{
+                padding: "14px 16px",
+                backgroundColor: THEME.colors.surface,
+                border: `1px solid ${THEME.colors.border}`,
+                borderRadius: THEME.radius.sm,
+                color: THEME.colors.textSecondary,
+                fontSize: "13px",
+                cursor: "pointer",
+                textAlign: "left",
+              }}
+            >
+              Clear Live Transcript Cache
+            </button>
+
+            <button
+              type="button"
+              onClick={onClearAlertsHistory}
+              style={{
+                padding: "14px 16px",
+                backgroundColor: THEME.colors.surface,
+                border: `1px solid ${THEME.colors.border}`,
+                borderRadius: THEME.radius.sm,
+                color: THEME.colors.textSecondary,
+                fontSize: "13px",
+                cursor: "pointer",
+                textAlign: "left",
+              }}
+            >
+              Clear Alert History
+            </button>
+
+            <button
+              type="button"
+              onClick={onResetSession}
+              style={{
+                marginTop: "10px",
+                padding: "14px 16px",
+                backgroundColor: THEME.colors.redMutedBg,
+                border: `1px solid ${THEME.colors.redBorder}`,
+                borderRadius: THEME.radius.sm,
+                color: THEME.colors.accentRed,
+                fontSize: "13px",
+                fontWeight: 700,
+                cursor: "pointer",
+                textAlign: "left",
+              }}
+            >
+              Reset OiU Session State
             </button>
           </div>
-        </form>
-      </div>
-
-      {/* SECTION 3: Audio & Meeting Preferences */}
-      <div
-        style={{
-          backgroundColor: THEME.colors.bgSecondary,
-          border: `1px solid ${THEME.colors.border}`,
-          borderRadius: THEME.radius.lg,
-          padding: "16px",
-          marginBottom: "16px",
-        }}
-      >
-        <div style={{ fontSize: "13.5px", fontWeight: 600, marginBottom: "12px" }}>
-          Audio & Verification
         </div>
+      )}
 
-        <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
-          <button
-            onClick={onPlayChime}
-            style={{
-              padding: "8px 12px",
-              backgroundColor: THEME.colors.surface,
-              border: `1px solid ${THEME.colors.border}`,
-              borderRadius: THEME.radius.md,
-              color: THEME.colors.textPrimary,
-              fontSize: "12px",
-              cursor: "pointer",
-              textAlign: "left",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "space-between",
-            }}
-          >
-            <span>Test Alert Chime (Web Audio Synthesizer)</span>
-            <span style={{ color: THEME.colors.accentGreen, fontWeight: 600 }}>Play ♫</span>
-          </button>
-
-          <button
-            onClick={onTestAlert}
-            style={{
-              padding: "8px 12px",
-              backgroundColor: THEME.colors.surface,
-              border: `1px solid ${THEME.colors.border}`,
-              borderRadius: THEME.radius.md,
-              color: THEME.colors.textPrimary,
-              fontSize: "12px",
-              cursor: "pointer",
-              textAlign: "left",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "space-between",
-            }}
-          >
-            <span>Trigger Full Synthetic Alert</span>
-            <span style={{ color: THEME.colors.accentAmber, fontWeight: 600 }}>Trigger</span>
-          </button>
-
-          <button
-            onClick={() => {
-              setKickstartFeedback(true);
-              setTimeout(() => setKickstartFeedback(false), 2000);
-              if (onKickstartCaptions) {
-                onKickstartCaptions();
-              } else {
-                onTurnOnCaptions();
-              }
-            }}
-            style={{
-              padding: "8px 12px",
-              backgroundColor: kickstartFeedback ? THEME.colors.greenMutedBg : THEME.colors.surface,
-              border: `1px solid ${kickstartFeedback ? THEME.colors.greenBorder : THEME.colors.border}`,
-              borderRadius: THEME.radius.md,
-              color: THEME.colors.textPrimary,
-              fontSize: "12px",
-              cursor: "pointer",
-              textAlign: "left",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "space-between",
-              transition: "all 0.15s ease",
-            }}
-          >
-            <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-              <ZapIcon size={13} color={THEME.colors.accentGreen} />
-              <span>Kickstart / Reconnect Meet Captions (Fixes stalled captions)</span>
-            </div>
-            <span style={{ color: THEME.colors.accentGreen, fontWeight: 600 }}>
-              {kickstartFeedback ? "Kickstarted!" : "Reconnect"}
-            </span>
-          </button>
-        </div>
-      </div>
-
-      {/* SECTION 4: Data & Maintenance */}
-      <div
-        style={{
-          backgroundColor: THEME.colors.bgSecondary,
-          border: `1px solid ${THEME.colors.border}`,
-          borderRadius: THEME.radius.lg,
-          padding: "16px",
-          marginBottom: "16px",
-        }}
-      >
-        <div style={{ fontSize: "13.5px", fontWeight: 600, marginBottom: "12px" }}>
-          Session & Storage
-        </div>
-
-        <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
-          <button
-            onClick={onClearTranscripts}
-            style={{
-              padding: "8px 12px",
-              backgroundColor: THEME.colors.surface,
-              border: `1px solid ${THEME.colors.border}`,
-              borderRadius: THEME.radius.md,
-              color: THEME.colors.textSecondary,
-              fontSize: "12px",
-              cursor: "pointer",
-              textAlign: "left",
-            }}
-          >
-            Clear Live Transcript History
-          </button>
-
-          <button
-            onClick={onClearAlertsHistory}
-            style={{
-              padding: "8px 12px",
-              backgroundColor: THEME.colors.surface,
-              border: `1px solid ${THEME.colors.border}`,
-              borderRadius: THEME.radius.md,
-              color: THEME.colors.textSecondary,
-              fontSize: "12px",
-              cursor: "pointer",
-              textAlign: "left",
-            }}
-          >
-            Clear Alert History
-          </button>
-
-          <button
-            onClick={onResetSession}
-            style={{
-              padding: "8px 12px",
-              backgroundColor: THEME.colors.redMutedBg,
-              border: `1px solid ${THEME.colors.redBorder}`,
-              borderRadius: THEME.radius.md,
-              color: THEME.colors.accentRed,
-              fontSize: "12px",
-              fontWeight: 600,
-              cursor: "pointer",
-              textAlign: "left",
-            }}
-          >
-            Reset OiU Session State
-          </button>
-        </div>
-      </div>
-
-      {/* SECTION 5: About OiU */}
-      <div style={{ textAlign: "center", padding: "12px 0 24px 0", fontSize: "11px", color: THEME.colors.textMuted }}>
-        <div>OiU — Meeting Awareness Copilot v0.1.0</div>
-        <div style={{ marginTop: "4px" }}>Zero-Impact Local Processing Architecture</div>
+      {/* FOOTER */}
+      <div style={{ marginTop: "auto", paddingTop: "30px", textAlign: "center", fontSize: "11px", color: THEME.colors.textMuted }}>
+        <div>OiU Meeting Copilot · Zero-Impact Local Engine</div>
       </div>
     </div>
   );
 };
-

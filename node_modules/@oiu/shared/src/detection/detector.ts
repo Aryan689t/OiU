@@ -1,7 +1,13 @@
 import { UserProfile } from "../types/profile.js";
 import { TranscriptSegment } from "../types/transcript.js";
 import { MeetingEvent, MeetingEventType } from "../types/events.js";
-import { matchName, matchIdentifier } from "./matcher.js";
+import {
+  matchIdentifier,
+  CompiledTarget,
+  compileTarget,
+  prepareCaptionText,
+  matchCompiledTarget,
+} from "./matcher.js";
 import {
   parseSentenceStream,
   getDialogueAnalysis,
@@ -39,14 +45,41 @@ export class EventDetector {
   private profile: UserProfile;
   private activeTurn: SpeechTurn | null = null;
   private alertedSentenceHashes = new Map<string, number>();
+  private compiledNames: CompiledTarget[] = [];
+  private compiledKeywords: CompiledTarget[] = [];
 
   constructor(profile: UserProfile, _legacyCooldownMs = 0) {
     this.profile = profile;
+    this.compileProfileTargets();
+  }
+
+  private compileProfileTargets() {
+    // Pre-generate spelling/phonetic/STT variants once on profile load or update (longest-first for specificity)
+    const rawNames = [this.profile.displayName, ...(this.profile.aliases || [])]
+      .map((n) => n.trim())
+      .filter((n) => n.length > 0)
+      .filter((val, idx, arr) => arr.indexOf(val) === idx)
+      .sort((a, b) => b.length - a.length);
+
+    this.compiledNames = rawNames
+      .map((n) => compileTarget(n))
+      .filter((c): c is CompiledTarget => c !== null);
+
+    const rawKeywords = (this.profile.keywords || [])
+      .map((k) => k.trim())
+      .filter((k) => k.length > 0)
+      .filter((val, idx, arr) => arr.indexOf(val) === idx)
+      .sort((a, b) => b.length - a.length);
+
+    this.compiledKeywords = rawKeywords
+      .map((k) => compileTarget(k))
+      .filter((c): c is CompiledTarget => c !== null);
   }
 
   public updateProfile(profile: UserProfile) {
     this.profile = profile;
     this.alertedSentenceHashes.clear();
+    this.compileProfileTargets();
   }
 
   public resetHistory() {
@@ -387,16 +420,11 @@ export class EventDetector {
       }
     }
 
-    // 2. Check Display Name and Aliases - SORT LONGEST FIRST
-    // Ensures specific names ("Tathagat", len 8) are evaluated before shorter substrings ("Aryan", len 5)
-    const nameTargets = [this.profile.displayName, ...this.profile.aliases]
-      .map((n) => n.trim())
-      .filter((n) => n.length > 0)
-      .filter((val, idx, arr) => arr.indexOf(val) === idx)
-      .sort((a, b) => b.length - a.length);
+    // 2. Check Display Name and Aliases (pre-compiled with spelling/phonetic variants, longest-first)
+    const prepared = prepareCaptionText(text);
 
-    for (const rawName of nameTargets) {
-      const match = matchName(text, rawName);
+    for (const compiledName of this.compiledNames) {
+      const match = matchCompiledTarget(prepared, compiledName);
       if (match.matched) {
         const isQuestion = this.checkQuestionPattern(lowerText);
         const eventType: MeetingEventType = isQuestion ? "DIRECT_QUESTION" : "NAME_MENTION";
@@ -411,43 +439,47 @@ export class EventDetector {
           confidence: match.confidence,
           urgency: "high",
           explanation: isQuestion
-            ? `Direct question addressed to ${rawName}.`
-            : `Your name "${rawName}" was called.`,
+            ? `Direct question addressed to ${compiledName.raw}.`
+            : `Your name "${compiledName.raw}" was called.`,
         };
 
         return { hasEvent: true, event };
       }
     }
 
-    // 3. Check User-Configured Keywords / Monitored Topics
-    if (this.profile.keywords && this.profile.keywords.length > 0) {
-      for (const kw of this.profile.keywords) {
-        if (!kw || kw.trim().length === 0) continue;
-        const cleanKw = kw.trim().toLowerCase();
-        const kwRegex = new RegExp(`(^|[^a-z0-9])${cleanKw.replace(/[\^$*+?.()|[\]{}\\]/g, "\\$&")}([^a-z0-9]|$)`, "i");
-        if (cleanKw.length >= 2 && (lowerText.includes(cleanKw) || kwRegex.test(lowerText))) {
-          const isQuestion = this.checkQuestionPattern(lowerText);
-          const isAttendance = cleanKw.includes("attendance") || cleanKw.includes("present") || this.checkAttendancePattern(lowerText);
-          const eventType: MeetingEventType = isAttendance ? "ATTENDANCE_CALL" : isQuestion ? "DIRECT_QUESTION" : "KEYWORD_MENTION";
+    // 3. Check User-Configured Keywords / Monitored Topics (pre-compiled with spelling/phonetic variants)
+    for (const compiledKw of this.compiledKeywords) {
+      const match = matchCompiledTarget(prepared, compiledKw);
+      if (match.matched) {
+        const isQuestion = this.checkQuestionPattern(lowerText);
+        const isAttendance =
+          compiledKw.variants.has("attendance") ||
+          compiledKw.targetLower.includes("attend") ||
+          compiledKw.targetLower.includes("present") ||
+          this.checkAttendancePattern(lowerText);
+        const eventType: MeetingEventType = isAttendance
+          ? "ATTENDANCE_CALL"
+          : isQuestion
+          ? "DIRECT_QUESTION"
+          : "KEYWORD_MENTION";
 
-          const event: MeetingEvent = {
-            id: `evt_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
-            sessionId,
-            type: eventType,
-            transcriptExcerpt: text,
-            evidenceSegmentIds: [segmentId],
-            timestampMs: now,
-            confidence: 0.98,
-            urgency: isQuestion || isAttendance ? "high" : "medium",
-            explanation: isAttendance
-              ? `Attendance call detected for keyword "${kw.trim()}".`
-              : isQuestion
-              ? `Question regarding your keyword "${kw.trim()}".`
-              : `Your monitored keyword "${kw.trim()}" was mentioned.`,
-          };
+        const event: MeetingEvent = {
+          id: `evt_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+          sessionId,
+          type: eventType,
+          transcriptExcerpt: text,
+          evidenceSegmentIds: [segmentId],
+          timestampMs: now,
+          confidence: match.confidence,
+          urgency: isQuestion || isAttendance ? "high" : "medium",
+          explanation: isAttendance
+            ? `Attendance call detected for keyword "${compiledKw.raw}".`
+            : isQuestion
+            ? `Question regarding your keyword "${compiledKw.raw}".`
+            : `Your monitored keyword "${compiledKw.raw}" was mentioned.`,
+        };
 
-          return { hasEvent: true, event };
-        }
+        return { hasEvent: true, event };
       }
     }
 
