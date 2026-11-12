@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { SessionInfo, UserProfile, DEFAULT_PROFILE, ExtensionMessage } from "@oiu/shared";
 import { THEME } from "../sidepanel/theme";
-import { OiULogoMark, MicrophoneIcon, StopSquareIcon, ExternalLinkIcon } from "../sidepanel/icons";
+import { OiULogoMark, MicrophoneIcon, StopSquareIcon, ExternalLinkIcon, UserIcon } from "../sidepanel/icons";
 
 export const PopupApp: React.FC = () => {
   const [session, setSession] = useState<SessionInfo>({
@@ -43,7 +43,7 @@ export const PopupApp: React.FC = () => {
       { type: "START_SESSION_REQUEST", payload: { tabId: session.tabId } },
       (res) => {
         if (!res?.success) {
-          alert(res?.error || "Failed to start listening.");
+          alert(res?.error || "Failed to start listening. Open a Google Meet tab first.");
         }
       }
     );
@@ -53,8 +53,44 @@ export const PopupApp: React.FC = () => {
     chrome.runtime.sendMessage({ type: "STOP_SESSION_REQUEST" });
   };
 
+  const isConfigured = Boolean(profile.displayName && profile.displayName.trim().length > 0);
   const isListening = session.state === "LISTENING";
   const isMeetReady = session.state === "SUPPORTED_TAB_READY";
+
+  const getStatusBadge = () => {
+    if (!isConfigured) {
+      return {
+        text: "Setup Needed",
+        bg: THEME.colors.accentPeachLight,
+        color: THEME.colors.accentPeachDark,
+        border: THEME.colors.accentPeachBorder,
+      };
+    }
+    if (isListening) {
+      return {
+        text: "Listening",
+        bg: THEME.colors.accentSageLight,
+        color: THEME.colors.accentSageDark,
+        border: THEME.colors.accentSageBorder,
+      };
+    }
+    if (isMeetReady) {
+      return {
+        text: "Meet Ready",
+        bg: THEME.colors.accentBlueLight,
+        color: THEME.colors.accentBlueDark,
+        border: THEME.colors.accentBlueBorder,
+      };
+    }
+    return {
+      text: "Standby",
+      bg: THEME.colors.bgSubtle,
+      color: THEME.colors.textSecondary,
+      border: THEME.colors.border,
+    };
+  };
+
+  const statusBadge = getStatusBadge();
 
   return (
     <div
@@ -65,6 +101,7 @@ export const PopupApp: React.FC = () => {
         backgroundColor: THEME.colors.bg,
         color: THEME.colors.textPrimary,
         fontFamily: THEME.typography.fontFamily,
+        overflowX: "hidden",
       }}
     >
       {/* Header */}
@@ -73,14 +110,30 @@ export const PopupApp: React.FC = () => {
           display: "flex",
           alignItems: "center",
           justifyContent: "space-between",
-          marginBottom: "14px",
+          marginBottom: "12px",
           paddingBottom: "10px",
           borderBottom: `1px solid ${THEME.colors.border}`,
         }}
       >
         <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
           <OiULogoMark size={20} color={THEME.colors.textPrimary} />
-          <span style={{ fontSize: "16px", fontWeight: 800, letterSpacing: "-0.3px" }}>OiU</span>
+          <span style={{ fontSize: "16px", fontWeight: 800, letterSpacing: "-0.3px", color: THEME.colors.textPrimary }}>
+            OiU
+          </span>
+          <span
+            style={{
+              fontSize: "9.5px",
+              fontWeight: 700,
+              color: THEME.colors.accentLavenderDark,
+              backgroundColor: THEME.colors.accentLavenderLight,
+              padding: "2px 6px",
+              borderRadius: THEME.radius.xs,
+              letterSpacing: "0.4px",
+              fontFamily: THEME.typography.monoFamily,
+            }}
+          >
+            SIGNAL DESK
+          </span>
         </div>
 
         <div
@@ -89,51 +142,74 @@ export const PopupApp: React.FC = () => {
             alignItems: "center",
             gap: "5px",
             padding: "3px 8px",
-            borderRadius: THEME.radius.pill,
-            backgroundColor: isListening ? THEME.colors.greenMutedBg : THEME.colors.surface,
-            border: `1px solid ${isListening ? THEME.colors.greenBorder : THEME.colors.border}`,
-            fontSize: "11px",
-            fontWeight: 600,
-            color: isListening ? THEME.colors.accentGreen : THEME.colors.textSecondary,
+            borderRadius: THEME.radius.xs,
+            backgroundColor: statusBadge.bg,
+            border: `1px solid ${statusBadge.border}`,
+            fontSize: "10.5px",
+            fontWeight: 700,
+            color: statusBadge.color,
+            fontFamily: THEME.typography.monoFamily,
           }}
         >
           <span
             style={{
-              width: "6px",
-              height: "6px",
+              width: "5px",
+              height: "5px",
               borderRadius: "50%",
-              backgroundColor: isListening
-                ? THEME.colors.accentGreen
-                : isMeetReady
-                ? THEME.colors.accentBlue
-                : THEME.colors.textMuted,
+              backgroundColor: statusBadge.color,
             }}
           />
-          <span>{isListening ? "Listening" : isMeetReady ? "Meet Ready" : "Offline"}</span>
+          <span>{statusBadge.text}</span>
         </div>
       </div>
 
-      {/* Target Profile Card */}
+      {/* Target Identity Parameters */}
       <div
         style={{
-          backgroundColor: THEME.colors.bgSecondary,
+          backgroundColor: THEME.colors.surface,
           border: `1px solid ${THEME.colors.border}`,
           borderRadius: THEME.radius.md,
-          padding: "12px",
-          marginBottom: "14px",
+          padding: "10px 12px",
+          marginBottom: "12px",
+          boxShadow: THEME.shadows.card,
         }}
       >
-        <div style={{ fontSize: "10.5px", fontWeight: 700, color: THEME.colors.textSecondary, textTransform: "uppercase", letterSpacing: "0.5px", marginBottom: "4px" }}>
-          Active Target
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            marginBottom: "4px",
+          }}
+        >
+          <span
+            style={{
+              fontSize: "10px",
+              fontWeight: 700,
+              color: THEME.colors.textMuted,
+              textTransform: "uppercase",
+              letterSpacing: "0.5px",
+              fontFamily: THEME.typography.monoFamily,
+            }}
+          >
+            Active Target
+          </span>
+          {profile.identifiers.length > 0 && (
+            <span
+              style={{
+                fontSize: "10.5px",
+                fontWeight: 700,
+                color: THEME.colors.accentPeachDark,
+                fontFamily: THEME.typography.monoFamily,
+              }}
+            >
+              #{profile.identifiers.join(" · #")}
+            </span>
+          )}
         </div>
         <div style={{ fontSize: "14px", fontWeight: 700, color: THEME.colors.textPrimary }}>
-          {profile.displayName || <span style={{ color: THEME.colors.textMuted }}>Not configured</span>}
+          {profile.displayName || <span style={{ color: THEME.colors.textMuted }}>Setup required</span>}
         </div>
-        {profile.identifiers.length > 0 && (
-          <div style={{ fontSize: "11px", color: THEME.colors.textSecondary, marginTop: "2px", fontFamily: THEME.typography.monoFamily }}>
-            ID: {profile.identifiers.join(", ")}
-          </div>
-        )}
       </div>
 
       {/* Primary Actions */}
@@ -143,8 +219,8 @@ export const PopupApp: React.FC = () => {
           style={{
             width: "100%",
             padding: "10px 14px",
-            backgroundColor: THEME.colors.surfaceHighlight,
-            border: `1px solid ${THEME.colors.borderActive}`,
+            backgroundColor: THEME.colors.surface,
+            border: `1px solid ${THEME.colors.border}`,
             borderRadius: THEME.radius.md,
             color: THEME.colors.textPrimary,
             fontSize: "12.5px",
@@ -154,6 +230,8 @@ export const PopupApp: React.FC = () => {
             alignItems: "center",
             justifyContent: "center",
             gap: "6px",
+            boxShadow: THEME.shadows.sm,
+            transition: THEME.transitions.fast,
           }}
         >
           <span>Open Side Panel</span>
@@ -166,20 +244,21 @@ export const PopupApp: React.FC = () => {
             style={{
               width: "100%",
               padding: "10px 14px",
-              backgroundColor: THEME.colors.surface,
-              border: `1px solid ${THEME.colors.border}`,
+              backgroundColor: THEME.colors.accentCoralLight,
+              border: `1px solid ${THEME.colors.accentCoralBorder}`,
               borderRadius: THEME.radius.md,
-              color: THEME.colors.accentRed,
+              color: THEME.colors.accentCoralDark,
               fontSize: "12.5px",
-              fontWeight: 600,
+              fontWeight: 700,
               cursor: "pointer",
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
               gap: "6px",
+              transition: THEME.transitions.fast,
             }}
           >
-            <StopSquareIcon size={12} color={THEME.colors.accentRed} />
+            <StopSquareIcon size={12} color={THEME.colors.accentCoralDark} />
             <span>Stop Listening</span>
           </button>
         ) : (
@@ -188,10 +267,10 @@ export const PopupApp: React.FC = () => {
             style={{
               width: "100%",
               padding: "10px 14px",
-              backgroundColor: THEME.colors.accentGreen,
-              border: "none",
+              backgroundColor: THEME.colors.accentLavender,
+              border: `1px solid ${THEME.colors.accentLavenderBorder}`,
               borderRadius: THEME.radius.md,
-              color: "#090A0B",
+              color: THEME.colors.textPrimary,
               fontSize: "12.5px",
               fontWeight: 700,
               cursor: "pointer",
@@ -199,9 +278,11 @@ export const PopupApp: React.FC = () => {
               alignItems: "center",
               justifyContent: "center",
               gap: "6px",
+              boxShadow: THEME.shadows.sm,
+              transition: THEME.transitions.fast,
             }}
           >
-            <MicrophoneIcon size={14} color="#090A0B" />
+            <MicrophoneIcon size={14} color={THEME.colors.textPrimary} />
             <span>Start Listening</span>
           </button>
         )}

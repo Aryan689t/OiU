@@ -3,16 +3,12 @@ import {
   SessionInfo,
   UserProfile,
   DEFAULT_PROFILE,
-  formatCommaSeparatedList,
-  parseCommaSeparatedList,
-  validateProfile,
   TranscriptSegment,
   MeetingEvent,
   EventDetector,
   DialogueAnalysis,
 } from "@oiu/shared";
 import {
-  extractCoreCalloutOrQuestion,
   generateSmartResponses,
   getInstantSmartResponses,
   SuggestedResponse,
@@ -21,7 +17,6 @@ import { THEME } from "./theme";
 import {
   OiULogoMark,
   SettingsIcon,
-  WaveformSmallIcon,
   ChevronRightIcon,
   EditPencilIcon,
   UserIcon,
@@ -31,8 +26,8 @@ import {
   StopSquareIcon,
   MessageSquareIcon,
   RefreshIcon,
-  ZapIcon,
 } from "./icons";
+import { AuraSignalArc, AuraSignalState } from "./AuraSignalArc";
 import { AudioWaveform } from "./AudioWaveform";
 import { DetectionCard } from "./DetectionCard";
 import { SettingsView } from "./SettingsView";
@@ -43,7 +38,6 @@ const PROFILE_STORAGE_KEY = "oiu_user_profile";
 const ALERTED_HASHES_STORAGE_KEY = "oiu_alerted_hashes";
 const GEMINI_API_KEY_STORAGE = "oiu_gemini_api_key";
 
-// Feature flag: Deactivate AI question answering for now (focusing 100% on the core meeting alert engine)
 const ENABLE_AI_ANSWER_ENGINE = false;
 
 let currentAudioCtx: AudioContext | null = null;
@@ -71,31 +65,31 @@ function playAlertChime() {
     const gain1 = ctx.createGain();
     osc1.type = "sine";
     osc1.frequency.setValueAtTime(659.25, now);
-    gain1.gain.setValueAtTime(0.28, now);
-    gain1.gain.exponentialRampToValueAtTime(0.0001, now + 0.2);
+    gain1.gain.setValueAtTime(0.24, now);
+    gain1.gain.exponentialRampToValueAtTime(0.0001, now + 0.22);
     osc1.connect(gain1);
     gain1.connect(ctx.destination);
     osc1.start(now);
-    osc1.stop(now + 0.2);
+    osc1.stop(now + 0.22);
 
     // Second tone (A5 - 880 Hz)
     const osc2 = ctx.createOscillator();
     const gain2 = ctx.createGain();
     osc2.type = "sine";
     osc2.frequency.setValueAtTime(880, now + 0.1);
-    gain2.gain.setValueAtTime(0.32, now + 0.1);
-    gain2.gain.exponentialRampToValueAtTime(0.0001, now + 0.35);
+    gain2.gain.setValueAtTime(0.28, now + 0.1);
+    gain2.gain.exponentialRampToValueAtTime(0.0001, now + 0.38);
     osc2.connect(gain2);
     gain2.connect(ctx.destination);
     osc2.start(now + 0.1);
-    osc2.stop(now + 0.35);
+    osc2.stop(now + 0.38);
 
     setTimeout(() => {
       if (currentAudioCtx === ctx) {
         try { ctx.close(); } catch {}
         currentAudioCtx = null;
       }
-    }, 400);
+    }, 450);
   } catch (err) {
     console.warn("[OiU] Chime playback note:", err);
   }
@@ -114,7 +108,6 @@ export const SidepanelApp: React.FC = () => {
   });
 
   const [profile, setProfile] = useState<UserProfile>(DEFAULT_PROFILE);
-  const [isCheckingTab, setIsCheckingTab] = useState(false);
 
   // Audio & Alert State
   const [audioLevel, setAudioLevel] = useState<number>(0);
@@ -206,17 +199,14 @@ export const SidepanelApp: React.FC = () => {
     setAlertsHistory((prev) => [event, ...prev.slice(0, 9)]);
     playAlertChime();
 
-    // 0ms instant smart grounded responses populated immediately
     const instantAnswers = getInstantSmartResponses(event, profileRef.current);
     setAiResponsesMap((prev) => ({ ...prev, [event.id]: instantAnswers }));
 
-    // Persist alerted sentence hashes across sidepanel open/close
     if (detectorRef.current) {
       const exported = detectorRef.current.exportAlertedHashes();
       chrome.storage.local.set({ [ALERTED_HASHES_STORAGE_KEY]: exported });
     }
 
-    // Debounced AI generation (protects from burning the 15 RPM rate limit during streaming)
     scheduleAiGeneration(event);
 
     try {
@@ -224,7 +214,7 @@ export const SidepanelApp: React.FC = () => {
         chrome.notifications.create({
           type: "basic",
           iconUrl: chrome.runtime.getURL("icon.png"),
-          title: "🚨 OiU Attention Alert!",
+          title: "OiU Attention Alert",
           message: `${event.explanation}\n"${event.transcriptExcerpt}"`,
           priority: 2,
         });
@@ -257,15 +247,12 @@ export const SidepanelApp: React.FC = () => {
       return copy;
     });
 
-    // Re-evaluate 0ms smart response for updated excerpt
     const updatedResponses = getInstantSmartResponses(event, profileRef.current);
     setAiResponsesMap((prev) => ({ ...prev, [event.id]: updatedResponses }));
-
-    // Debounced AI generation on updated excerpt
     scheduleAiGeneration(event);
   }, [scheduleAiGeneration]);
 
-  // Auto-finalize speech turns when speaker pauses > 2.0 seconds OR when utterance reaches 7 seconds
+  // Auto-finalize speech turns
   useEffect(() => {
     const timer = setInterval(() => {
       const now = Date.now();
@@ -285,24 +272,20 @@ export const SidepanelApp: React.FC = () => {
   }, []);
 
   const fetchSessionState = useCallback(() => {
-    setIsCheckingTab(true);
     chrome.runtime.sendMessage({ type: "GET_SESSION_STATE" }, (response) => {
-      setIsCheckingTab(false);
       if (chrome.runtime.lastError) return;
       if (response?.session) setSession(response.session);
     });
   }, []);
 
-  // Sync state ONCE on mount
+  // Sync state on mount
   useEffect(() => {
-    // 1. Load saved profile, previous alerted hashes, and Gemini API key
     chrome.storage.local.get([PROFILE_STORAGE_KEY, ALERTED_HASHES_STORAGE_KEY, GEMINI_API_KEY_STORAGE], (res) => {
       if (res?.[PROFILE_STORAGE_KEY]) {
         const saved = res[PROFILE_STORAGE_KEY] as UserProfile;
         setProfile(saved);
         detectorRef.current.updateProfile(saved);
       } else {
-        // If first run, open settings
         setCurrentView("settings");
       }
 
@@ -315,7 +298,6 @@ export const SidepanelApp: React.FC = () => {
       }
     });
 
-    // 2. Fetch session state, background transcripts, and any alerts captured while sidepanel was closed
     chrome.runtime.sendMessage({ type: "GET_SESSION_STATE" }, (response) => {
       if (chrome.runtime.lastError) return;
       if (response?.session) setSession(response.session);
@@ -336,7 +318,6 @@ export const SidepanelApp: React.FC = () => {
       }
     });
 
-    // 3. Attach runtime message listener
     const messageListener = (msg: any) => {
       if (!msg || !msg.type) return;
 
@@ -350,7 +331,6 @@ export const SidepanelApp: React.FC = () => {
           setLastSpeechTime(Date.now());
         }
       } else if (msg.type === "BACKGROUND_DETECTION_UPDATE" && msg.payload) {
-        // Sync single-source-of-truth detection from background service worker
         const {
           turnAction,
           transcripts: bgTranscripts,
@@ -423,7 +403,7 @@ export const SidepanelApp: React.FC = () => {
   };
 
   const handleStartListening = () => {
-    if (!profile.displayName) {
+    if (!profile.displayName?.trim()) {
       setCurrentView("settings");
       return;
     }
@@ -438,7 +418,7 @@ export const SidepanelApp: React.FC = () => {
           setSession(res.session);
           sessionRef.current = res.session;
         } else if (!res?.success) {
-          alert(res?.error || "Could not find an active Google Meet tab. Please open meet.google.com and try again.");
+          alert(res?.error || "Could not find an active Google Meet tab. Open meet.google.com and try again.");
           fetchSessionState();
         }
       }
@@ -485,12 +465,12 @@ export const SidepanelApp: React.FC = () => {
   };
 
   const handleTestAlert = () => {
-    const testName = profile.displayName || "User";
+    const testName = profile.displayName?.trim() || "User";
     const testEvent: MeetingEvent = {
       id: `test_${Date.now()}`,
       sessionId: session.sessionId || "test_session",
       type: "NAME_MENTION",
-      transcriptExcerpt: `${testName}, can you please answer the question?`,
+      transcriptExcerpt: `${testName}, can you please verify this point?`,
       evidenceSegmentIds: ["seg_test"],
       timestampMs: Date.now(),
       confidence: 0.96,
@@ -531,7 +511,68 @@ export const SidepanelApp: React.FC = () => {
     handleKickstartCaptions();
   };
 
+  const isConfigured = Boolean(profile.displayName && profile.displayName.trim().length > 0);
   const isListening = session.state === "LISTENING";
+  const isMeetReady = session.state === "SUPPORTED_TAB_READY";
+
+  // Determine truthful application state for the AURA Signal Arc and UI
+  const getTruthfulSignalState = (): AuraSignalState => {
+    if (!isConfigured) return "NOT_CONFIGURED";
+    if (activeAlert) return "ALERT";
+    if (session.state === "ERROR" || session.state === "PERMISSION_REQUIRED") return "ERROR";
+    if (session.state === "STOPPED" || session.state === "STOPPING") return "STOPPED";
+    if (isListening) return "LISTENING";
+    if (isMeetReady) return "READY";
+    return "NO_MEETING";
+  };
+
+  const signalState = getTruthfulSignalState();
+
+  // Header status badge
+  const getHeaderStatusBadge = () => {
+    if (!isConfigured) {
+      return {
+        text: "Setup Needed",
+        bg: THEME.colors.accentPeachLight,
+        color: THEME.colors.accentPeachDark,
+        border: THEME.colors.accentPeachBorder,
+      };
+    }
+    if (isListening) {
+      return {
+        text: isVoiceActive ? "Speech Active" : "Listening",
+        bg: THEME.colors.accentSageLight,
+        color: THEME.colors.accentSageDark,
+        border: THEME.colors.accentSageBorder,
+      };
+    }
+    if (isMeetReady) {
+      return {
+        text: "Meet Detected",
+        bg: THEME.colors.accentBlueLight,
+        color: THEME.colors.accentBlueDark,
+        border: THEME.colors.accentBlueBorder,
+      };
+    }
+    return {
+      text: "Standby",
+      bg: THEME.colors.bgSubtle,
+      color: THEME.colors.textSecondary,
+      border: THEME.colors.border,
+    };
+  };
+
+  const headerStatus = getHeaderStatusBadge();
+
+  // Waveform status description
+  const getWaveformStatus = () => {
+    if (!isConfigured) return "Setup incomplete";
+    if (isListening) {
+      return isVoiceActive ? "Active speech feed" : "Listening for speech...";
+    }
+    if (isMeetReady) return "Google Meet connected · Standby";
+    return "Waiting for Google Meet";
+  };
 
   // If in a secondary view, render it
   if (currentView === "settings") {
@@ -559,6 +600,7 @@ export const SidepanelApp: React.FC = () => {
         alertsHistory={alertsHistory}
         onSelectAlert={(index) => {
           setCurrentAlertIndex(index);
+          setActiveAlert(alertsHistory[index] || null);
           setCurrentView("main");
         }}
         onClearHistory={handleClearAlertsHistory}
@@ -581,16 +623,6 @@ export const SidepanelApp: React.FC = () => {
     );
   }
 
-  // Active / Selected alert suggestions
-  const displayAlert =
-    alertsHistory.length > 0 && alertsHistory[currentAlertIndex]
-      ? alertsHistory[currentAlertIndex]
-      : activeAlert || alertsHistory[0];
-
-  const suggestions = displayAlert
-    ? aiResponsesMap[displayAlert.id] || getInstantSmartResponses(displayAlert, profile)
-    : [];
-
   const priorContextTranscripts = transcripts.slice(-4, -1);
   const mostRecentAlert = alertsHistory[0];
 
@@ -609,111 +641,82 @@ export const SidepanelApp: React.FC = () => {
       }}
     >
       {/* Scrollable Main Content Container */}
-      <div style={{ flex: 1, padding: "16px 16px 85px 16px", boxSizing: "border-box" }}>
-        {/* A. HEADER */}
-        <div
+      <div style={{ flex: 1, padding: "14px 16px 88px 16px", boxSizing: "border-box" }}>
+        {/* A. REFINED HEADER */}
+        <header
           style={{
             display: "flex",
             alignItems: "center",
             justifyContent: "space-between",
             paddingBottom: "10px",
-            borderBottom: `1px solid ${THEME.colors.borderSubtle}`,
+            borderBottom: `1px solid ${THEME.colors.border}`,
+            marginBottom: "6px",
           }}
         >
-          {/* Left: Custom OiU Logo in Yellow + Monospace User Tag */}
-          <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+          {/* Left: Brand Identity & Meeting Status */}
+          <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+            <OiULogoMark size={20} color={THEME.colors.textPrimary} />
             <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-              <OiULogoMark size={20} color={THEME.colors.accentYellow} />
               <span
                 style={{
-                  fontSize: "20px",
-                  fontWeight: 700,
-                  letterSpacing: "0.5px",
-                  color: THEME.colors.accentYellow,
-                  fontFamily: THEME.typography.displayFont,
+                  fontSize: "16px",
+                  fontWeight: 800,
+                  letterSpacing: "-0.4px",
+                  color: THEME.colors.textPrimary,
                 }}
               >
                 OiU
               </span>
-            </div>
-
-            <span style={{ width: "1px", height: "20px", backgroundColor: "#333338", margin: "0 8px" }} />
-
-            <div>
               <div
                 style={{
-                  fontSize: "15px",
-                  fontWeight: 700,
-                  fontFamily: THEME.typography.displayFont,
-                  color: "#FFFFFF",
-                  letterSpacing: "0.5px",
-                  lineHeight: 1.2,
-                }}
-              >
-                {profile.displayName || "User"}
-                {profile.identifiers?.[0] ? (
-                  <span style={{ color: THEME.colors.accentYellow, marginLeft: "6px" }}>
-                    #{profile.identifiers[0]}
-                  </span>
-                ) : ""}
-              </div>
-              <div
-                style={{
-                  display: "flex",
+                  display: "inline-flex",
                   alignItems: "center",
-                  gap: "5px",
+                  gap: "4px",
+                  padding: "2px 7px",
+                  borderRadius: THEME.radius.pill,
+                  backgroundColor: headerStatus.bg,
+                  border: `1px solid ${headerStatus.border}`,
                   fontSize: "10.5px",
-                  fontFamily: THEME.typography.monoFamily,
-                  color: "#CCCCCC",
-                  marginTop: "2px",
+                  fontWeight: 700,
+                  color: headerStatus.color,
                 }}
               >
                 <span
                   style={{
                     width: "5px",
                     height: "5px",
-                    borderRadius: "1px",
-                    backgroundColor: isListening
-                      ? THEME.colors.accentYellow
-                      : session.state === "SUPPORTED_TAB_READY"
-                      ? THEME.colors.accentBlue
-                      : THEME.colors.textMuted,
-                    boxShadow: isListening ? `0 0 6px ${THEME.colors.accentYellow}` : "none",
+                    borderRadius: "50%",
+                    backgroundColor: headerStatus.color,
                   }}
                 />
-                <span style={{ fontWeight: 600 }}>
-                  {isListening
-                    ? "LISTENING"
-                    : session.state === "SUPPORTED_TAB_READY"
-                    ? "MEET DETECTED"
-                    : "STANDBY"}
-                </span>
+                <span>{headerStatus.text}</span>
               </div>
             </div>
           </div>
 
           {/* Right: Kickstart Captions & Settings */}
-          <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "5px" }}>
             <button
               onClick={handleKickstartCaptions}
-              title={captionKickstartFeedback ? "Captions kickstarted & reconnected!" : "Kickstart / Reconnect Meet Captions"}
+              title={captionKickstartFeedback ? "Captions kickstarted!" : "Reconnect Google Meet Captions"}
+              aria-label="Reconnect captions"
               style={{
-                width: "32px",
-                height: "32px",
-                backgroundColor: THEME.colors.surface,
-                border: "1px solid #333338",
+                width: "30px",
+                height: "30px",
+                backgroundColor: captionKickstartFeedback ? THEME.colors.accentSageLight : THEME.colors.surface,
+                border: `1px solid ${captionKickstartFeedback ? THEME.colors.accentSageBorder : THEME.colors.border}`,
                 cursor: "pointer",
-                borderRadius: THEME.radius.xs,
+                borderRadius: THEME.radius.sm,
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
-                color: captionKickstartFeedback ? THEME.colors.accentYellow : "#FFFFFF",
-                transition: "all 0.2s ease",
+                boxShadow: THEME.shadows.sm,
+                transition: THEME.transitions.fast,
               }}
             >
               <RefreshIcon
-                size={14}
-                color={captionKickstartFeedback ? THEME.colors.accentYellow : "#CCCCCC"}
+                size={13}
+                color={captionKickstartFeedback ? THEME.colors.accentSageDark : THEME.colors.textSecondary}
                 style={{
                   transform: captionKickstartFeedback ? "rotate(180deg)" : "none",
                   transition: "transform 0.4s ease",
@@ -723,41 +726,53 @@ export const SidepanelApp: React.FC = () => {
 
             <button
               onClick={() => setCurrentView("settings")}
-              title="Open Settings"
+              title="Open Preferences"
+              aria-label="Open Preferences"
               style={{
-                width: "32px",
-                height: "32px",
+                width: "30px",
+                height: "30px",
                 backgroundColor: THEME.colors.surface,
-                border: "1px solid #333338",
+                border: `1px solid ${THEME.colors.border}`,
                 cursor: "pointer",
-                borderRadius: THEME.radius.xs,
+                borderRadius: THEME.radius.sm,
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
-                color: "#FFFFFF",
+                boxShadow: THEME.shadows.sm,
+                transition: THEME.transitions.fast,
               }}
             >
-              <SettingsIcon size={15} color="#CCCCCC" />
+              <SettingsIcon size={14} color={THEME.colors.textPrimary} />
             </button>
           </div>
-        </div>
+        </header>
 
-        {/* B. AUDIO VISUALIZER (Centerpiece Waveform) */}
+        {/* B. AURA SIGNAL ARC LISTENING INSTRUMENT (Hero Area) */}
+        <AuraSignalArc
+          state={signalState}
+          audioLevel={audioLevel}
+          isVoiceActive={isVoiceActive}
+          targetName={profile.displayName}
+          onClick={!isConfigured ? () => setCurrentView("settings") : undefined}
+        />
+
+        {/* C. AUDIO VISUALIZER (Waveform Horizon) */}
         <AudioWaveform
           isListening={isListening}
           isVoiceActive={isVoiceActive}
           audioLevel={audioLevel}
           segmentsCount={transcripts.length}
           currentTimeString={currentTimeString}
+          statusText={getWaveformStatus()}
         />
 
-        {/* C. DETECTION / QUESTION & ANSWER CARD */}
+        {/* D. ACTIVE ALERT / ATTENTION SPOTLIGHT (Rendered ONLY when an alert is active or selected) */}
         <DetectionCard
           activeAlert={activeAlert}
           alertsHistory={alertsHistory}
           currentAlertIndex={currentAlertIndex}
           profile={profile}
-          suggestions={suggestions}
+          suggestions={[]}
           isGeneratingAi={isGeneratingAi}
           geminiApiKey={geminiApiKey}
           priorContextTranscripts={priorContextTranscripts}
@@ -774,352 +789,361 @@ export const SidepanelApp: React.FC = () => {
           onOpenSettings={() => setCurrentView("settings")}
         />
 
-        {/* DIVIDER & SECONDARY SCROLLABLE SECTIONS (BELOW THE FOLD) */}
-        <div style={{ marginTop: "24px", borderTop: `1px solid ${THEME.colors.border}`, paddingTop: "20px" }}>
-          
-          {/* E. KEYWORDS SECTION */}
-          <div style={{ marginBottom: "22px" }}>
-            <div
+        {/* E. MONITOR MATRIX (Structured Parameters - No Pill Clutter) */}
+        <section style={{ marginBottom: "16px" }}>
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              marginBottom: "6px",
+            }}
+          >
+            <span
               style={{
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "space-between",
-                marginBottom: "12px",
+                fontSize: "11px",
+                fontWeight: 700,
+                color: THEME.colors.textMuted,
+                letterSpacing: "0.5px",
+                textTransform: "uppercase",
+                fontFamily: THEME.typography.monoFamily,
               }}
             >
-              <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                <span
-                  style={{
-                    width: "5px",
-                    height: "5px",
-                    backgroundColor: THEME.colors.accentYellow,
-                    borderRadius: "1px",
-                  }}
-                />
-                <span
-                  style={{
-                    fontSize: "14px",
-                    fontWeight: 700,
-                    fontFamily: THEME.typography.displayFont,
-                    color: "#FFFFFF",
-                    letterSpacing: "1px",
-                    textTransform: "uppercase",
-                  }}
-                >
-                  Monitored Triggers
-                </span>
-              </div>
+              Monitor Matrix
+            </span>
 
-              <button
-                onClick={() => setCurrentView("settings")}
-                style={{
-                  background: THEME.colors.surface,
-                  border: `1px solid ${THEME.colors.border}`,
-                  borderRadius: THEME.radius.xs,
-                  color: "#FFFFFF",
-                  fontSize: "11px",
-                  fontWeight: 600,
-                  fontFamily: THEME.typography.monoFamily,
-                  cursor: "pointer",
-                  padding: "4px 8px",
-                  display: "flex",
-                  alignItems: "center",
-                  gap: "5px",
-                  transition: "background-color 0.15s ease",
-                }}
-              >
-                <EditPencilIcon size={12} color={THEME.colors.accentYellow} />
-                <span>EDIT</span>
-              </button>
-            </div>
-
-            <div style={{ display: "flex", flexWrap: "wrap", gap: "8px" }}>
-              {/* Display Name Chip (Highlighted) */}
-              {profile.displayName && (
-                <div
-                  style={{
-                    display: "inline-flex",
-                    alignItems: "center",
-                    gap: "6px",
-                    padding: "6px 12px",
-                    backgroundColor: THEME.colors.surface,
-                    border: `1px solid ${THEME.colors.accentYellow}`,
-                    borderRadius: THEME.radius.xs,
-                    fontSize: "12.5px",
-                    fontFamily: THEME.typography.monoFamily,
-                    color: THEME.colors.accentYellow,
-                    fontWeight: 700,
-                    letterSpacing: "0.3px",
-                  }}
-                >
-                  <UserIcon size={13} color={THEME.colors.accentYellow} />
-                  <span>{profile.displayName.toUpperCase()}</span>
-                </div>
-              )}
-
-              {/* Identifier Chips (Highlighted) */}
-              {profile.identifiers.map((id, i) => (
-                <div
-                  key={i}
-                  style={{
-                    display: "inline-flex",
-                    alignItems: "center",
-                    gap: "6px",
-                    padding: "6px 12px",
-                    backgroundColor: THEME.colors.surface,
-                    border: `1px solid ${THEME.colors.accentYellow}`,
-                    borderRadius: THEME.radius.xs,
-                    fontSize: "12.5px",
-                    fontFamily: THEME.typography.monoFamily,
-                    color: THEME.colors.accentYellow,
-                    fontWeight: 800,
-                    letterSpacing: "0.5px",
-                  }}
-                >
-                  <HashIcon size={13} color={THEME.colors.accentYellow} />
-                  <span>#{id}</span>
-                </div>
-              ))}
-
-              {/* Aliases Chips (Crisp White Text) */}
-              {profile.aliases.map((alias, i) => (
-                <div
-                  key={i}
-                  style={{
-                    display: "inline-flex",
-                    alignItems: "center",
-                    gap: "6px",
-                    padding: "6px 12px",
-                    backgroundColor: THEME.colors.surface,
-                    border: `1px solid #333338`,
-                    borderRadius: THEME.radius.xs,
-                    fontSize: "12.5px",
-                    fontFamily: THEME.typography.monoFamily,
-                    color: "#FFFFFF",
-                    fontWeight: 600,
-                  }}
-                >
-                  <UserIcon size={13} color="#999999" />
-                  <span>{alias.toUpperCase()}</span>
-                </div>
-              ))}
-
-              {/* Custom Monitored Keywords Chips (Crisp White Text) */}
-              {(profile.keywords || []).map((kw, i) => (
-                <div
-                  key={i}
-                  style={{
-                    display: "inline-flex",
-                    alignItems: "center",
-                    gap: "6px",
-                    padding: "6px 12px",
-                    backgroundColor: THEME.colors.surface,
-                    border: `1px solid #333338`,
-                    borderRadius: THEME.radius.xs,
-                    fontSize: "12.5px",
-                    fontFamily: THEME.typography.monoFamily,
-                    color: "#FFFFFF",
-                    fontWeight: 600,
-                  }}
-                >
-                  <TagIcon size={13} color={THEME.colors.accentYellow} />
-                  <span>{kw.toUpperCase()}</span>
-                </div>
-              ))}
-            </div>
+            <button
+              onClick={() => setCurrentView("settings")}
+              style={{
+                background: "none",
+                border: "none",
+                color: THEME.colors.accentLavenderDark,
+                fontSize: "11px",
+                fontWeight: 600,
+                cursor: "pointer",
+                padding: "2px 0",
+                display: "flex",
+                alignItems: "center",
+                gap: "3px",
+              }}
+            >
+              <EditPencilIcon size={11} color={THEME.colors.accentLavenderDark} />
+              <span>Edit Parameters ↗</span>
+            </button>
           </div>
 
-          {/* D. HISTORY SECTION */}
-          <div style={{ marginBottom: "22px" }}>
-            <div
-              style={{
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "space-between",
-                marginBottom: "12px",
-              }}
-            >
-              <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                <span
-                  style={{
-                    width: "5px",
-                    height: "5px",
-                    backgroundColor: THEME.colors.accentYellow,
-                    borderRadius: "1px",
-                  }}
-                />
-                <span
-                  style={{
-                    fontSize: "14px",
-                    fontWeight: 700,
-                    fontFamily: THEME.typography.displayFont,
-                    color: "#FFFFFF",
-                    letterSpacing: "1px",
-                    textTransform: "uppercase",
-                  }}
-                >
-                  Recent Callouts
-                </span>
-              </div>
-
-              {alertsHistory.length > 0 && (
-                <button
-                  onClick={() => setCurrentView("history")}
-                  style={{
-                    background: "none",
-                    border: "none",
-                    color: THEME.colors.accentYellow,
-                    fontSize: "11px",
-                    fontWeight: 700,
-                    fontFamily: THEME.typography.monoFamily,
-                    cursor: "pointer",
-                    padding: 0,
-                    display: "flex",
-                    alignItems: "center",
-                    gap: "3px",
-                  }}
-                >
-                  <span>VIEW ALL ({alertsHistory.length})</span>
-                  <span>→</span>
-                </button>
-              )}
-            </div>
-
-            {mostRecentAlert ? (
-              <div
-                onClick={() => setCurrentView("history")}
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "space-between",
-                  backgroundColor: THEME.colors.surface,
-                  border: `1px solid ${THEME.colors.border}`,
-                  borderRadius: THEME.radius.sm,
-                  padding: "12px 14px",
-                  cursor: "pointer",
-                  transition: "background-color 0.15s ease",
-                }}
-              >
-                <div style={{ display: "flex", alignItems: "center", gap: "10px", flex: 1, minWidth: 0, marginRight: "8px" }}>
-                  <div
-                    style={{
-                      fontFamily: THEME.typography.monoFamily,
-                      fontSize: "12px",
-                      color: THEME.colors.accentYellow,
-                      fontWeight: 800,
-                    }}
-                  >
-                    {new Date(mostRecentAlert.timestampMs).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-                  </div>
-                  <div
-                    style={{
-                      fontSize: "13.5px",
-                      color: "#FFFFFF",
-                      fontWeight: 500,
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                      whiteSpace: "nowrap",
-                    }}
-                  >
-                    "{mostRecentAlert.transcriptExcerpt}"
-                  </div>
+          <div
+            style={{
+              backgroundColor: THEME.colors.surface,
+              border: `1px solid ${THEME.colors.border}`,
+              borderRadius: THEME.radius.md,
+              padding: "10px 14px",
+              boxShadow: THEME.shadows.card,
+            }}
+          >
+            {isConfigured ? (
+              <div style={{ display: "flex", flexDirection: "column", gap: "7px" }}>
+                {/* Target Name */}
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <span style={{ fontSize: "11.5px", color: THEME.colors.textSecondary, fontWeight: 500 }}>
+                    Target Identity
+                  </span>
+                  <span style={{ fontSize: "12.5px", fontWeight: 700, color: THEME.colors.textPrimary }}>
+                    {profile.displayName}
+                  </span>
                 </div>
-                <ChevronRightIcon size={14} color="#AAAAAA" />
+
+                {/* Roll Numbers / Identifiers */}
+                {profile.identifiers && profile.identifiers.length > 0 && (
+                  <div
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      alignItems: "center",
+                      borderTop: `1px solid ${THEME.colors.borderSubtle}`,
+                      paddingTop: "6px",
+                    }}
+                  >
+                    <span style={{ fontSize: "11.5px", color: THEME.colors.textSecondary, fontWeight: 500 }}>
+                      Roll / Reg IDs
+                    </span>
+                    <span
+                      style={{
+                        fontSize: "11.5px",
+                        fontWeight: 700,
+                        color: THEME.colors.accentPeachDark,
+                        fontFamily: THEME.typography.monoFamily,
+                      }}
+                    >
+                      {profile.identifiers.map((id) => `#${id}`).join(" · ")}
+                    </span>
+                  </div>
+                )}
+
+                {/* Phonetic Aliases */}
+                {profile.aliases && profile.aliases.length > 0 && (
+                  <div
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      alignItems: "center",
+                      borderTop: `1px solid ${THEME.colors.borderSubtle}`,
+                      paddingTop: "6px",
+                    }}
+                  >
+                    <span style={{ fontSize: "11.5px", color: THEME.colors.textSecondary, fontWeight: 500 }}>
+                      Phonetic Aliases
+                    </span>
+                    <span style={{ fontSize: "11.5px", color: THEME.colors.textPrimary, fontWeight: 500 }}>
+                      {profile.aliases.join(", ")}
+                    </span>
+                  </div>
+                )}
+
+                {/* Monitored Keywords */}
+                {profile.keywords && profile.keywords.length > 0 && (
+                  <div
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      alignItems: "center",
+                      borderTop: `1px solid ${THEME.colors.borderSubtle}`,
+                      paddingTop: "6px",
+                    }}
+                  >
+                    <span style={{ fontSize: "11.5px", color: THEME.colors.textSecondary, fontWeight: 500 }}>
+                      Watch Keywords
+                    </span>
+                    <span style={{ fontSize: "11.5px", color: THEME.colors.accentLavenderDark, fontWeight: 600 }}>
+                      {profile.keywords.join(", ")}
+                    </span>
+                  </div>
+                )}
               </div>
             ) : (
               <div
+                className="aura-interactive-card"
+                onClick={() => setCurrentView("settings")}
                 style={{
-                  backgroundColor: THEME.colors.surface,
-                  border: `1px solid ${THEME.colors.border}`,
-                  borderRadius: THEME.radius.sm,
-                  padding: "14px 16px",
-                  fontSize: "13px",
-                  color: "#CCCCCC",
-                  fontWeight: 500,
+                  padding: "4px 0",
+                  fontSize: "11.5px",
+                  color: THEME.colors.accentPeachDark,
+                  cursor: "pointer",
+                  fontWeight: 600,
+                  lineHeight: 1.4,
                 }}
               >
-                No callouts recorded in this session yet.
+                Make OiU yours — set your name and keywords in Preferences to start monitoring ↗
               </div>
             )}
           </div>
+        </section>
 
-          {/* F. LIVE STREAM ACCESS ROW */}
-          <div>
-            <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "12px" }}>
+        {/* F. RECENT CALLOUTS SECTION */}
+        <section style={{ marginBottom: "14px" }}>
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              marginBottom: "8px",
+            }}
+          >
+            <div style={{ display: "flex", alignItems: "center", gap: "5px" }}>
               <span
                 style={{
                   width: "5px",
                   height: "5px",
-                  backgroundColor: THEME.colors.accentYellow,
-                  borderRadius: "1px",
+                  backgroundColor: THEME.colors.accentLavenderDark,
+                  borderRadius: "50%",
                 }}
               />
               <span
                 style={{
-                  fontSize: "14px",
+                  fontSize: "11.5px",
                   fontWeight: 700,
-                  fontFamily: THEME.typography.displayFont,
-                  color: "#FFFFFF",
-                  letterSpacing: "1px",
+                  color: THEME.colors.textPrimary,
+                  letterSpacing: "0.2px",
                   textTransform: "uppercase",
                 }}
               >
-                Live Meeting Stream
+                Recent Callouts
               </span>
             </div>
 
+            {alertsHistory.length > 0 && (
+              <button
+                onClick={() => setCurrentView("history")}
+                style={{
+                  background: "none",
+                  border: "none",
+                  color: THEME.colors.accentLavenderDark,
+                  fontSize: "11px",
+                  fontWeight: 700,
+                  cursor: "pointer",
+                  padding: 0,
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "2px",
+                }}
+              >
+                <span>View all ({alertsHistory.length})</span>
+                <span>→</span>
+              </button>
+            )}
+          </div>
+
+          {mostRecentAlert ? (
             <div
-              onClick={() => setCurrentView("transcript")}
+              className="aura-interactive-card"
+              onClick={() => {
+                setActiveAlert(mostRecentAlert);
+                setCurrentAlertIndex(0);
+              }}
               style={{
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "space-between",
                 backgroundColor: THEME.colors.surface,
                 border: `1px solid ${THEME.colors.border}`,
-                borderRadius: THEME.radius.sm,
-                padding: "13px 16px",
+                borderRadius: THEME.radius.md,
+                padding: "10px 12px",
                 cursor: "pointer",
-                transition: "border-color 0.15s ease",
+                boxShadow: THEME.shadows.card,
+                transition: THEME.transitions.fast,
               }}
             >
-              <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-                <MessageSquareIcon size={16} color={THEME.colors.accentYellow} />
-                <span style={{ fontSize: "13px", color: "#FFFFFF", fontWeight: 600 }}>
-                  Open Meeting Caption Stream
-                </span>
-                {transcripts.length > 0 && (
-                  <span
-                    style={{
-                      fontSize: "11px",
-                      fontFamily: THEME.typography.monoFamily,
-                      fontWeight: 800,
-                      backgroundColor: "#000000",
-                      color: THEME.colors.accentYellow,
-                      padding: "2px 7px",
-                      borderRadius: "2px",
-                      border: `1px solid ${THEME.colors.yellowBorder}`,
-                    }}
-                  >
-                    {transcripts.length} TURNS
-                  </span>
-                )}
+              <div style={{ display: "flex", alignItems: "center", gap: "8px", flex: 1, minWidth: 0, marginRight: "6px" }}>
+                <div
+                  style={{
+                    fontSize: "10.5px",
+                    color: THEME.colors.accentLavenderDark,
+                    fontWeight: 700,
+                    fontFamily: THEME.typography.monoFamily,
+                  }}
+                >
+                  {new Date(mostRecentAlert.timestampMs).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                </div>
+                <div
+                  style={{
+                    fontSize: "12.5px",
+                    color: THEME.colors.textPrimary,
+                    fontWeight: 500,
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  "{mostRecentAlert.transcriptExcerpt}"
+                </div>
               </div>
-              <ChevronRightIcon size={15} color="#AAAAAA" />
+              <ChevronRightIcon size={13} color={THEME.colors.textMuted} />
             </div>
+          ) : (
+            <div
+              style={{
+                backgroundColor: THEME.colors.surface,
+                border: `1px solid ${THEME.colors.border}`,
+                borderRadius: THEME.radius.md,
+                padding: "11px 13px",
+                fontSize: "11.5px",
+                color: THEME.colors.textSecondary,
+                boxShadow: THEME.shadows.card,
+              }}
+            >
+              All quiet for now. No mentions recorded in this session.
+            </div>
+          )}
+        </section>
+
+        {/* G. LIVE STREAM ENTRY ROW */}
+        <section>
+          <div style={{ display: "flex", alignItems: "center", gap: "5px", marginBottom: "8px" }}>
+            <span
+              style={{
+                width: "5px",
+                height: "5px",
+                backgroundColor: THEME.colors.accentLavenderDark,
+                borderRadius: "50%",
+              }}
+            />
+            <span
+              style={{
+                fontSize: "11.5px",
+                fontWeight: 700,
+                color: THEME.colors.textPrimary,
+                letterSpacing: "0.2px",
+                textTransform: "uppercase",
+              }}
+            >
+              Meeting Stream
+            </span>
           </div>
-        </div>
+
+          <div
+            className="aura-interactive-card"
+            onClick={() => setCurrentView("transcript")}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              backgroundColor: THEME.colors.surface,
+              border: `1px solid ${THEME.colors.border}`,
+              borderRadius: THEME.radius.md,
+              padding: "10px 12px",
+              cursor: "pointer",
+              boxShadow: THEME.shadows.card,
+              transition: THEME.transitions.fast,
+            }}
+          >
+            <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+              <div
+                style={{
+                  width: "26px",
+                  height: "26px",
+                  borderRadius: THEME.radius.xs,
+                  backgroundColor: THEME.colors.accentLavenderLight,
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                }}
+              >
+                <MessageSquareIcon size={13} color={THEME.colors.accentLavenderDark} />
+              </div>
+              <span style={{ fontSize: "12.5px", color: THEME.colors.textPrimary, fontWeight: 600 }}>
+                Open Meeting Stream
+              </span>
+              {transcripts.length > 0 && (
+                <span
+                  style={{
+                    fontSize: "10.5px",
+                    fontWeight: 700,
+                    backgroundColor: THEME.colors.bgSubtle,
+                    color: THEME.colors.accentLavenderDark,
+                    padding: "1px 7px",
+                    borderRadius: THEME.radius.pill,
+                    border: `1px solid ${THEME.colors.border}`,
+                  }}
+                >
+                  {transcripts.length} turns
+                </span>
+              )}
+            </div>
+            <ChevronRightIcon size={13} color={THEME.colors.textMuted} />
+          </div>
+        </section>
       </div>
 
-      {/* G. FLOATING BOTTOM LISTENING CONTROLS */}
+      {/* H. FLOATING BOTTOM LISTENING CONTROLS */}
       <div
         style={{
           position: "fixed",
           bottom: 0,
           left: 0,
           right: 0,
-          padding: "10px 16px 14px 16px",
-          backgroundColor: "rgba(0, 0, 0, 0.95)",
-          backdropFilter: "blur(10px)",
+          padding: "10px 16px 12px 16px",
+          backgroundColor: "rgba(250, 249, 246, 0.95)",
+          backdropFilter: "blur(12px)",
           borderTop: `1px solid ${THEME.colors.border}`,
           display: "flex",
           flexDirection: "column",
@@ -1127,65 +1151,80 @@ export const SidepanelApp: React.FC = () => {
           zIndex: 100,
         }}
       >
-        {isListening ? (
+        {!isConfigured ? (
           <button
-            onClick={handleStopListening}
+            onClick={() => setCurrentView("settings")}
             style={{
               width: "100%",
-              maxWidth: "360px",
+              maxWidth: "380px",
               padding: "11px 18px",
-              backgroundColor: THEME.colors.surface,
-              border: `1px solid ${THEME.colors.border}`,
-              borderRadius: THEME.radius.sm,
+              backgroundColor: THEME.colors.accentLavender,
+              border: `1px solid ${THEME.colors.accentLavenderBorder}`,
+              borderRadius: THEME.radius.md,
               color: THEME.colors.textPrimary,
-              fontSize: "14px",
+              fontSize: "13px",
               fontWeight: 700,
-              fontFamily: THEME.typography.displayFont,
-              letterSpacing: "1.2px",
               cursor: "pointer",
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
-              gap: "8px",
-              transition: "all 0.12s ease",
+              gap: "6px",
+              boxShadow: THEME.shadows.sm,
+              transition: THEME.transitions.fast,
             }}
           >
-            <div
-              style={{
-                width: "8px",
-                height: "8px",
-                backgroundColor: THEME.colors.accentRed,
-                borderRadius: "1px",
-              }}
-            />
-            <span>STOP LISTENING</span>
+            <UserIcon size={13} color={THEME.colors.textPrimary} />
+            <span>Configure Profile to Start</span>
+          </button>
+        ) : isListening ? (
+          <button
+            onClick={handleStopListening}
+            style={{
+              width: "100%",
+              maxWidth: "380px",
+              padding: "11px 18px",
+              backgroundColor: THEME.colors.surface,
+              border: `1px solid ${THEME.colors.accentCoralBorder}`,
+              borderRadius: THEME.radius.md,
+              color: THEME.colors.accentCoralDark,
+              fontSize: "13px",
+              fontWeight: 700,
+              cursor: "pointer",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: "7px",
+              boxShadow: THEME.shadows.sm,
+              transition: THEME.transitions.fast,
+            }}
+          >
+            <StopSquareIcon size={12} color={THEME.colors.accentCoralDark} />
+            <span>Stop Listening</span>
           </button>
         ) : (
           <button
             onClick={handleStartListening}
             style={{
               width: "100%",
-              maxWidth: "360px",
+              maxWidth: "380px",
               padding: "11px 18px",
-              backgroundColor: THEME.colors.accentYellow,
-              border: "none",
-              borderRadius: THEME.radius.sm,
-              color: "#000000",
-              fontSize: "14px",
+              backgroundColor: THEME.colors.accentLavender,
+              border: `1px solid ${THEME.colors.accentLavenderBorder}`,
+              borderRadius: THEME.radius.md,
+              color: THEME.colors.textPrimary,
+              fontSize: "13px",
               fontWeight: 700,
-              fontFamily: THEME.typography.displayFont,
-              letterSpacing: "1.2px",
               cursor: "pointer",
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
-              gap: "8px",
-              boxShadow: "0 0 16px rgba(255, 230, 0, 0.25)",
-              transition: "all 0.12s ease",
+              gap: "7px",
+              boxShadow: THEME.shadows.sm,
+              transition: THEME.transitions.fast,
             }}
           >
-            <MicrophoneIcon size={14} color="#000000" />
-            <span>START LISTENING</span>
+            <MicrophoneIcon size={14} color={THEME.colors.textPrimary} />
+            <span>Start Listening</span>
           </button>
         )}
       </div>
