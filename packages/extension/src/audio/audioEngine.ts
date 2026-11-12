@@ -167,23 +167,10 @@ export class PureAudioEngine {
 
       this.mixedStreamDestination = this.audioContext.createMediaStreamDestination();
 
-      // 1. Hook into meeting's remote participant audio
+      // 1. Hook ONLY into meeting's remote participant <audio> streams (never bypass Meet's mic mute button)
       this.hookMeetingRemoteAudio();
 
-      // 2. Hook into local microphone so when user speaks or answers, that's heard too
-      try {
-        if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-          const micStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
-          const micSource = this.audioContext.createMediaStreamSource(micStream);
-          micSource.connect(this.analyser);
-          micSource.connect(this.mixedStreamDestination);
-          console.log("[OiU Audio Engine] Microphone stream linked to audio pipeline.");
-        }
-      } catch (micErr) {
-        console.log("[OiU Audio Engine] Microphone permission note (remote audio still active):", micErr);
-      }
-
-      // 3. Scan periodically for newly connected participant audio streams
+      // 2. Scan periodically for newly connected participant audio streams
       this.remoteScanInterval = setInterval(() => {
         if (this.active) this.hookMeetingRemoteAudio();
       }, 2000);
@@ -191,13 +178,8 @@ export class PureAudioEngine {
       this.active = true;
       this.startVolumeMonitoringAndVAD();
 
-      // If user has no Groq key entered yet, spin up browser Web Speech API as instant backup
-      if (!this.groqApiKey) {
-        this.startBrowserSpeechFallback();
-      }
-
-      this.options?.onStatusChange?.("listening", "Listening to live meeting audio (Zero-captions)");
-      console.log("[OiU Audio Engine] Pure Audio Mode initialized successfully. Zero captions dependency.");
+      this.options?.onStatusChange?.("listening", "Listening to remote meeting audio");
+      console.log("[OiU Audio Engine] Remote meeting audio monitor initialized (mic privacy preserved).");
       return true;
     } catch (err: any) {
       console.error("[OiU Audio Engine] Failed to start pure audio engine:", err);
@@ -208,7 +190,7 @@ export class PureAudioEngine {
   }
 
   /**
-   * Scans Google Meet DOM for WebRTC `<audio>` elements and routes them into our mixer
+   * Scans Google Meet DOM for WebRTC `<audio>` elements and routes remote speaker audio into our mixer
    */
   private hookMeetingRemoteAudio() {
     if (!this.audioContext || !this.analyser || !this.mixedStreamDestination) return;
@@ -218,23 +200,30 @@ export class PureAudioEngine {
       audioElements.forEach((audioEl) => {
         const stream = (audioEl as any).srcObject as MediaStream | undefined;
 
-        if (stream && !this.attachedMediaElements.has(stream)) {
-          this.attachedMediaElements.add(stream);
-          try {
-            const remoteSource = this.audioContext!.createMediaStreamSource(stream);
-            remoteSource.connect(this.analyser!);
-            remoteSource.connect(this.mixedStreamDestination!);
-            console.log("[OiU Audio Engine] Hooked remote speaker audio stream to Groq pipeline.");
-          } catch (e) {
-            console.warn("[OiU Audio Engine] Stream hook note:", e);
+        if (stream) {
+          if (!this.attachedMediaElements.has(stream)) {
+            this.attachedMediaElements.add(stream);
+            this.attachedMediaElements.add(audioEl);
+            try {
+              // Ensure AudioContext resumes when active remote stream arrives
+              if (this.audioContext!.state === "suspended") {
+                this.audioContext!.resume().catch(() => {});
+              }
+              const remoteSource = this.audioContext!.createMediaStreamSource(stream);
+              remoteSource.connect(this.analyser!);
+              remoteSource.connect(this.mixedStreamDestination!);
+              console.log("[OiU Audio Engine] Hooked remote speaker audio stream.");
+            } catch (e) {
+              console.warn("[OiU Audio Engine] Stream hook note:", e);
+            }
           }
-        } else if (!this.attachedMediaElements.has(audioEl)) {
+        } else if (audioEl.src && !this.attachedMediaElements.has(audioEl)) {
           this.attachedMediaElements.add(audioEl);
           try {
             const elSource = this.audioContext!.createMediaElementSource(audioEl);
             elSource.connect(this.analyser!);
             elSource.connect(this.mixedStreamDestination!);
-            elSource.connect(this.audioContext!.destination); // preserve audio playback to headphones
+            elSource.connect(this.audioContext!.destination);
             console.log("[OiU Audio Engine] Hooked audio element source.");
           } catch {}
         }
@@ -512,6 +501,7 @@ export class PureAudioEngine {
     this.analyser = null;
     this.mixedStreamDestination = null;
     this.recordedChunks = [];
+    this.attachedMediaElements = new WeakSet();
     this.isSpeaking = false;
     this.options?.onStatusChange?.("idle");
     console.log("[OiU Audio Engine] Pure audio engine stopped cleanly.");

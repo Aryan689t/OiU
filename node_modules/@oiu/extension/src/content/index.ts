@@ -1,5 +1,6 @@
 import { TranscriptSegment } from "@oiu/shared";
 import { pureAudioEngine, GROQ_API_KEY_STORAGE, LISTENING_MODE_STORAGE } from "../audio/audioEngine";
+import { triggerYellowScreenFlash, clearYellowScreenFlash } from "../utils/screenFlash";
 
 console.log("[OiU Content Script] Loaded in Zero-Impact mode.");
 
@@ -872,58 +873,6 @@ function playBackgroundAlertChime() {
   }
 }
 
-let flashOverlayFadeTimeout: any = null;
-let flashOverlayRemoveTimeout: any = null;
-
-function clearMeetYellowScreenFlash() {
-  if (flashOverlayFadeTimeout) {
-    clearTimeout(flashOverlayFadeTimeout);
-    flashOverlayFadeTimeout = null;
-  }
-  if (flashOverlayRemoveTimeout) {
-    clearTimeout(flashOverlayRemoveTimeout);
-    flashOverlayRemoveTimeout = null;
-  }
-  const existing = document.getElementById("oiu-yellow-flash-overlay");
-  if (existing) existing.remove();
-}
-
-function showMeetYellowScreenFlash() {
-  try {
-    clearMeetYellowScreenFlash();
-
-    const overlay = document.createElement("div");
-    overlay.id = "oiu-yellow-flash-overlay";
-    overlay.style.cssText = [
-      "position: fixed",
-      "inset: 0",
-      "z-index: 2147483647",
-      "pointer-events: none",
-      "background: radial-gradient(circle at center, rgba(255, 230, 0, 0.26) 0%, rgba(255, 230, 0, 0.44) 100%)",
-      "box-shadow: inset 0 0 90px rgba(255, 230, 0, 0.85), inset 0 0 16px 4px rgba(255, 230, 0, 0.95)",
-      "opacity: 0",
-      "transition: opacity 120ms ease-out",
-    ].join("; ");
-
-    (document.body || document.documentElement).appendChild(overlay);
-
-    // Force layout before animating in, then fade out so total effect lasts ~1 second
-    void overlay.offsetWidth;
-    overlay.style.opacity = "1";
-
-    flashOverlayFadeTimeout = setTimeout(() => {
-      overlay.style.transition = "opacity 780ms ease-out";
-      overlay.style.opacity = "0";
-    }, 220);
-
-    flashOverlayRemoveTimeout = setTimeout(() => {
-      clearMeetYellowScreenFlash();
-    }, 1050);
-  } catch (err) {
-    console.warn("[OiU] Translucent flash overlay error:", err);
-  }
-}
-
 const messageListener = (message: any, _sender: any, sendResponse: (res?: any) => void) => {
   if (message?.type === "START_MEET_MONITORING") {
     startMonitoring();
@@ -933,13 +882,13 @@ const messageListener = (message: any, _sender: any, sendResponse: (res?: any) =
 
   if (message?.type === "PLAY_BACKGROUND_ALERT") {
     playBackgroundAlertChime();
-    showMeetYellowScreenFlash();
+    triggerYellowScreenFlash();
     sendResponse({ success: true });
     return false;
   }
 
   if (message?.type === "SHOW_MEET_FLASH") {
-    showMeetYellowScreenFlash();
+    triggerYellowScreenFlash();
     sendResponse({ success: true });
     return false;
   }
@@ -952,7 +901,7 @@ const messageListener = (message: any, _sender: any, sendResponse: (res?: any) =
 
   if (message?.type === "STOP_MEET_MONITORING") {
     stopMonitoring();
-    clearMeetYellowScreenFlash();
+    clearYellowScreenFlash();
     sendResponse({ success: true, monitoring: false });
     return false;
   }
@@ -963,7 +912,7 @@ chrome.runtime.onMessage.addListener(messageListener);
 // Register instance cleanup hook so reinjections or updates never leave dangling listeners or intervals
 (window as any).__oiuCleanup = () => {
   stopMonitoring();
-  clearMeetYellowScreenFlash();
+  clearYellowScreenFlash();
   try {
     chrome.runtime.onMessage.removeListener(messageListener);
   } catch {}

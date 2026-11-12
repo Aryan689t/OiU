@@ -3,7 +3,6 @@ import { MeetingEvent, UserProfile } from "@oiu/shared";
 import { THEME } from "./theme";
 import {
   BellIcon,
-  PlaySolidIcon,
   LightningIcon,
   BriefcaseIcon,
   QuestionCircleIcon,
@@ -21,6 +20,66 @@ import {
 // Feature flag: Question answering / suggested responses deactivated to focus 100% on the alert engine
 const ENABLE_SUGGESTED_RESPONSES = false;
 
+function escapeRegex(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function renderHighlightedCallout(text: string, profile: UserProfile): React.ReactNode {
+  if (!text) return text;
+
+  const rawTerms = [
+    profile.displayName,
+    ...(profile.aliases || []),
+    ...(profile.identifiers || []).flatMap((id) => {
+      const trimmed = id.trim();
+      const withoutHash = trimmed.replace(/^#+/, "");
+      return withoutHash && withoutHash !== trimmed ? [trimmed, withoutHash] : [trimmed];
+    }),
+    ...(profile.keywords || []),
+  ];
+
+  const seen = new Set<string>();
+  const terms: string[] = [];
+  for (const item of rawTerms) {
+    const clean = (item || "").trim();
+    if (!clean) continue;
+    const key = clean.toLowerCase();
+    if (!seen.has(key)) {
+      seen.add(key);
+      terms.push(clean);
+    }
+  }
+
+  if (terms.length === 0) return text;
+
+  // Match longest triggers first so e.g. "Tathagat" wins over shorter substrings
+  terms.sort((a, b) => b.length - a.length);
+  const pattern = terms.map(escapeRegex).join("|");
+  const splitRegex = new RegExp(`(?<![A-Za-z0-9])(${pattern})(?![A-Za-z0-9])`, "gi");
+  const parts = text.split(splitRegex);
+
+  if (parts.length <= 1) return text;
+
+  return parts.map((part, idx) =>
+    idx % 2 === 1 ? (
+      <mark
+        key={idx}
+        style={{
+          backgroundColor: THEME.colors.accentYellow,
+          color: "#000000",
+          padding: "0 5px",
+          borderRadius: "2px",
+          fontWeight: 700,
+        }}
+      >
+        {part}
+      </mark>
+    ) : (
+      <React.Fragment key={idx}>{part}</React.Fragment>
+    )
+  );
+}
+
 interface DetectionCardProps {
   activeAlert: MeetingEvent | null;
   alertsHistory: MeetingEvent[];
@@ -34,7 +93,6 @@ interface DetectionCardProps {
   copiedSuggestionIdx: number | null;
   onNavigateAlert: (newIndex: number) => void;
   onDismissAlert: () => void;
-  onPlayChime: () => void;
   onRegenerateAi: (event: MeetingEvent) => void;
   onOpenSettings: () => void;
 }
@@ -52,7 +110,6 @@ export const DetectionCard: React.FC<DetectionCardProps> = ({
   copiedSuggestionIdx,
   onNavigateAlert,
   onDismissAlert,
-  onPlayChime,
   onRegenerateAi,
   onOpenSettings,
 }) => {
@@ -249,27 +306,8 @@ export const DetectionCard: React.FC<DetectionCardProps> = ({
           </div>
         </div>
 
-        {/* Right Play & Dismiss Actions */}
-        <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-          <button
-            onClick={onPlayChime}
-            title="Replay alert chime"
-            style={{
-              width: "32px",
-              height: "32px",
-              borderRadius: "3px",
-              backgroundColor: THEME.colors.accentYellow,
-              border: "none",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              cursor: "pointer",
-              boxShadow: `0 0 10px ${THEME.colors.yellowGlow}`,
-              transition: "transform 0.1s ease",
-            }}
-          >
-            <PlaySolidIcon size={12} color="#000000" style={{ marginLeft: "1px" }} />
-          </button>
+        {/* Right Dismiss Action */}
+        <div style={{ display: "flex", alignItems: "center" }}>
           <button
             onClick={onDismissAlert}
             title="Dismiss & Silence Alert"
@@ -311,7 +349,7 @@ export const DetectionCard: React.FC<DetectionCardProps> = ({
             letterSpacing: "-0.1px",
           }}
         >
-          "{coreText || displayAlert.transcriptExcerpt}"
+          "{renderHighlightedCallout(coreText || displayAlert.transcriptExcerpt, profile)}"
         </div>
       </div>
 

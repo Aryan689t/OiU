@@ -499,16 +499,8 @@ export const SidepanelApp: React.FC = () => {
     };
     triggerAlert(testEvent);
 
-    const flashMsg = { type: "SHOW_MEET_FLASH" };
-    if (session.tabId && session.tabId > 0) {
-      chrome.tabs.sendMessage(session.tabId, flashMsg).catch(() => {});
-    } else {
-      chrome.tabs.query({ url: "*://meet.google.com/*" }, (tabs) => {
-        if (tabs && tabs[0]?.id) {
-          chrome.tabs.sendMessage(tabs[0].id, flashMsg).catch(() => {});
-        }
-      });
-    }
+    // Flash currently active Chrome tabs + Meet tab via background coordinator
+    chrome.runtime.sendMessage({ type: "FLASH_ACTIVE_TABS_REQUEST" }).catch(() => {});
   };
 
   const handleKickstartCaptions = () => {
@@ -769,7 +761,6 @@ export const SidepanelApp: React.FC = () => {
             setActiveAlert(null);
             chrome.runtime.sendMessage({ type: "DISMISS_ACTIVE_ALERT" }).catch(() => {});
           }}
-          onPlayChime={playAlertChime}
           onRegenerateAi={handleRegenerateAi}
           onOpenSettings={() => setCurrentView("settings")}
         />
