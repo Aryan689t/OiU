@@ -7,8 +7,58 @@ import {
   TranscriptSegment,
   MeetingEvent,
 } from "@oiu/shared";
+import { triggerYellowScreenFlash } from "../utils/screenFlash";
 
 console.log("[OiU Service Worker] Initializing ultra-stable zero-impact background coordinator...");
+
+function isScriptableTabUrl(url?: string): boolean {
+  if (!url) return false;
+  const lower = url.toLowerCase();
+  if (!lower.startsWith("http://") && !lower.startsWith("https://") && !lower.startsWith("file://")) {
+    return false;
+  }
+  if (
+    lower.startsWith("https://chrome.google.com/webstore") ||
+    lower.startsWith("https://chromewebstore.google.com")
+  ) {
+    return false;
+  }
+  return true;
+}
+
+/**
+ * Flashes the 1-second translucent yellow overlay on all currently active
+ * Chrome tabs across open windows (so alerts are visible even when browsing
+ * another tab), and requests taskbar attention if the user is in another app.
+ */
+async function flashVisibleChromeTabs(excludeTabIds: Set<number> = new Set()): Promise<void> {
+  try {
+    const activeTabs = await chrome.tabs.query({ active: true });
+    const attentionWindowIds = new Set<number>();
+
+    for (const tab of activeTabs) {
+      if (typeof tab.windowId === "number" && !attentionWindowIds.has(tab.windowId)) {
+        attentionWindowIds.add(tab.windowId);
+        chrome.windows.update(tab.windowId, { drawAttention: true }).catch(() => {});
+      }
+
+      if (!tab.id || excludeTabIds.has(tab.id) || !isScriptableTabUrl(tab.url)) {
+        continue;
+      }
+
+      if (chrome.scripting?.executeScript) {
+        chrome.scripting
+          .executeScript({
+            target: { tabId: tab.id },
+            func: triggerYellowScreenFlash,
+          })
+          .catch(() => {});
+      }
+    }
+  } catch (err) {
+    console.warn("[OiU Service Worker] Cross-tab flash error:", err);
+  }
+}
 
 const PROFILE_STORAGE_KEY = "oiu_user_profile";
 const SESSION_STORAGE_KEY = "oiu_session_state";
@@ -382,25 +432,32 @@ chrome.runtime.onMessage.addListener((message: any, _sender, sendResponse) => {
             console.warn("[OiU Service Worker] Notification error:", err);
           }
 
-          // 2. Play sound chime & trigger 1-second translucent yellow screen flash in Google Meet tab
+          // 2. Play sound chime & trigger 1-second translucent yellow screen flash in Google Meet + active Chrome tabs
           const targetTabId = _sender.tab?.id || currentSession.tabId;
+          const flashedMeetTabIds = new Set<number>();
+
           if (targetTabId && targetTabId > 0) {
+            flashedMeetTabIds.add(targetTabId);
             chrome.tabs.sendMessage(targetTabId, {
               type: "PLAY_BACKGROUND_ALERT",
               event: result.event,
             }).catch(() => {});
           } else {
-            chrome.tabs.query({ url: "*://meet.google.com/*" }).then((tabs) => {
-              tabs.forEach((t) => {
+            try {
+              const meetTabs = await chrome.tabs.query({ url: "*://meet.google.com/*" });
+              for (const t of meetTabs) {
                 if (t.id) {
+                  flashedMeetTabIds.add(t.id);
                   chrome.tabs.sendMessage(t.id, {
                     type: "PLAY_BACKGROUND_ALERT",
                     event: result.event,
                   }).catch(() => {});
                 }
-              });
-            }).catch(() => {});
+              }
+            } catch {}
           }
+
+          flashVisibleChromeTabs(flashedMeetTabIds).catch(() => {});
         } else if (result.turnAction === "UPDATE_ALERT" && result.event) {
           activeAlert = result.event;
           if (alertsHistory.length > 0) {
@@ -446,6 +503,12 @@ chrome.runtime.onMessage.addListener((message: any, _sender, sendResponse) => {
       if (tabId && tabId > 0 && chrome.sidePanel?.open) {
         chrome.sidePanel.open({ tabId }).catch(() => {});
       }
+      sendResponse({ success: true });
+      return false;
+    }
+
+    case "FLASH_ACTIVE_TABS_REQUEST": {
+      flashVisibleChromeTabs().catch(() => {});
       sendResponse({ success: true });
       return false;
     }

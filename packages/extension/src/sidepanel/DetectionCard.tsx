@@ -13,6 +13,68 @@ import {
   extractCoreCalloutOrQuestion,
 } from "../services/aiService";
 
+// Suggested-response controls remain absent from this alert-focused component.
+// Keep transcript trigger highlighting from main.
+function escapeRegex(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function renderHighlightedCallout(text: string, profile: UserProfile): React.ReactNode {
+  if (!text) return text;
+
+  const rawTerms = [
+    profile.displayName,
+    ...(profile.aliases || []),
+    ...(profile.identifiers || []).flatMap((id) => {
+      const trimmed = id.trim();
+      const withoutHash = trimmed.replace(/^#+/, "");
+      return withoutHash && withoutHash !== trimmed ? [trimmed, withoutHash] : [trimmed];
+    }),
+    ...(profile.keywords || []),
+  ];
+
+  const seen = new Set<string>();
+  const terms: string[] = [];
+  for (const item of rawTerms) {
+    const clean = (item || "").trim();
+    if (!clean) continue;
+    const key = clean.toLowerCase();
+    if (!seen.has(key)) {
+      seen.add(key);
+      terms.push(clean);
+    }
+  }
+
+  if (terms.length === 0) return text;
+
+  // Match longest triggers first so e.g. "Tathagat" wins over shorter substrings
+  terms.sort((a, b) => b.length - a.length);
+  const pattern = terms.map(escapeRegex).join("|");
+  const splitRegex = new RegExp(`(?<![A-Za-z0-9])(${pattern})(?![A-Za-z0-9])`, "gi");
+  const parts = text.split(splitRegex);
+
+  if (parts.length <= 1) return text;
+
+  return parts.map((part, idx) =>
+    idx % 2 === 1 ? (
+      <mark
+        key={idx}
+        style={{
+          backgroundColor: THEME.colors.accentPeachLight,
+          color: THEME.colors.textPrimary,
+          padding: "0 5px",
+          borderRadius: "2px",
+          fontWeight: 700,
+        }}
+      >
+        {part}
+      </mark>
+    ) : (
+      <React.Fragment key={idx}>{part}</React.Fragment>
+    )
+  );
+}
+
 interface DetectionCardProps {
   activeAlert: MeetingEvent | null;
   alertsHistory: MeetingEvent[];
@@ -26,9 +88,9 @@ interface DetectionCardProps {
   copiedSuggestionIdx: number | null;
   onNavigateAlert: (newIndex: number) => void;
   onDismissAlert: () => void;
-  onPlayChime: () => void;
   onRegenerateAi: (event: MeetingEvent) => void;
   onOpenSettings: () => void;
+  onPlayChime?: () => void;
 }
 
 export const DetectionCard: React.FC<DetectionCardProps> = ({
@@ -200,26 +262,30 @@ export const DetectionCard: React.FC<DetectionCardProps> = ({
 
         {/* Right Play & Dismiss Actions */}
         <div style={{ display: "flex", alignItems: "center", gap: "5px" }}>
+          {onPlayChime && (
+            <button
+              type="button"
+              onClick={onPlayChime}
+              title="Replay alert chime"
+              aria-label="Replay alert chime"
+              style={{
+                width: "28px",
+                height: "28px",
+                borderRadius: THEME.radius.sm,
+                backgroundColor: THEME.colors.accentLavenderLight,
+                border: `1px solid ${THEME.colors.accentLavenderBorder}`,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                cursor: "pointer",
+                transition: THEME.transitions.fast,
+              }}
+            >
+              <PlaySolidIcon size={10} color={THEME.colors.accentLavenderDark} style={{ marginLeft: "1px" }} />
+            </button>
+          )}
           <button
-            onClick={onPlayChime}
-            title="Replay alert chime"
-            aria-label="Replay alert chime"
-            style={{
-              width: "28px",
-              height: "28px",
-              borderRadius: THEME.radius.sm,
-              backgroundColor: THEME.colors.accentLavenderLight,
-              border: `1px solid ${THEME.colors.accentLavenderBorder}`,
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              cursor: "pointer",
-              transition: THEME.transitions.fast,
-            }}
-          >
-            <PlaySolidIcon size={10} color={THEME.colors.accentLavenderDark} style={{ marginLeft: "1px" }} />
-          </button>
-          <button
+            type="button"
             onClick={onDismissAlert}
             title="Dismiss Alert"
             aria-label="Dismiss Alert"
@@ -260,7 +326,7 @@ export const DetectionCard: React.FC<DetectionCardProps> = ({
             lineHeight: 1.5,
           }}
         >
-          "{coreText || displayAlert.transcriptExcerpt}"
+          "{renderHighlightedCallout(coreText || displayAlert.transcriptExcerpt, profile)}"
         </div>
       </div>
 
