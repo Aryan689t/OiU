@@ -1,7 +1,7 @@
 import React from "react";
 import { MeetingEvent } from "@oiu/shared";
 import { THEME } from "./theme";
-import { ArrowLeftIcon, WaveformSmallIcon, ChevronRightIcon } from "./icons";
+import { ArrowLeftIcon, BellIcon, ChevronRightIcon, SparklesIcon } from "./icons";
 
 interface HistoryViewProps {
   alertsHistory: MeetingEvent[];
@@ -25,8 +25,9 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
         backgroundColor: THEME.colors.bg,
         color: THEME.colors.textPrimary,
         boxSizing: "border-box",
-        padding: "16px",
+        padding: "18px 16px 24px 16px",
         overflowY: "auto",
+        fontFamily: THEME.typography.fontFamily,
       }}
     >
       {/* Header */}
@@ -40,27 +41,33 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
           marginBottom: "16px",
         }}
       >
-        <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
           <button
             onClick={onClose}
+            aria-label="Back to assistant"
             style={{
-              background: "none",
+              background: THEME.colors.surface,
               border: `1px solid ${THEME.colors.border}`,
               borderRadius: THEME.radius.sm,
-              padding: "5px 8px",
+              padding: "6px 12px",
               color: THEME.colors.textPrimary,
               cursor: "pointer",
               display: "flex",
               alignItems: "center",
-              justifyContent: "center",
-              backgroundColor: THEME.colors.surface,
+              gap: "6px",
+              fontSize: "12px",
+              fontWeight: 600,
+              boxShadow: THEME.shadows.sm,
+              transition: THEME.transitions.fast,
             }}
-            title="Back to Assistant"
           >
             <ArrowLeftIcon size={14} color={THEME.colors.textPrimary} />
+            <span>Back</span>
           </button>
           <div>
-            <div style={{ fontSize: "16px", fontWeight: 700, letterSpacing: "-0.2px" }}>Alert History</div>
+            <div style={{ fontSize: "16px", fontWeight: 800, color: THEME.colors.textPrimary, letterSpacing: "-0.2px" }}>
+              Alert History
+            </div>
             <div style={{ fontSize: "11px", color: THEME.colors.textSecondary }}>
               {alertsHistory.length} saved alert{alertsHistory.length === 1 ? "" : "s"}
             </div>
@@ -71,13 +78,15 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
           <button
             onClick={onClearHistory}
             style={{
-              background: "none",
-              border: `1px solid ${THEME.colors.border}`,
-              borderRadius: THEME.radius.xs,
-              color: THEME.colors.accentRed,
+              background: THEME.colors.accentCoralLight,
+              border: `1px solid ${THEME.colors.accentCoralBorder}`,
+              borderRadius: THEME.radius.sm,
+              color: THEME.colors.accentCoralDark,
               fontSize: "11px",
-              padding: "4px 8px",
+              fontWeight: 700,
+              padding: "5px 10px",
               cursor: "pointer",
+              transition: THEME.transitions.fast,
             }}
           >
             Clear All
@@ -95,28 +104,31 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
             alignItems: "center",
             justifyContent: "center",
             color: THEME.colors.textSecondary,
-            fontSize: "13px",
             textAlign: "center",
-            padding: "32px 16px",
+            padding: "40px 16px",
           }}
         >
           <div
             style={{
-              width: "42px",
-              height: "42px",
+              width: "48px",
+              height: "48px",
               borderRadius: "50%",
               backgroundColor: THEME.colors.surface,
+              border: `1px solid ${THEME.colors.border}`,
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
-              marginBottom: "10px",
+              marginBottom: "12px",
+              boxShadow: THEME.shadows.sm,
             }}
           >
-            <WaveformSmallIcon size={20} color={THEME.colors.textMuted} />
+            <SparklesIcon size={22} color={THEME.colors.accentLavenderDark} />
           </div>
-          <div>No alerts recorded yet.</div>
-          <div style={{ fontSize: "11px", color: THEME.colors.textMuted, marginTop: "4px" }}>
-            Alerts will appear here when your name or monitored topics are called.
+          <div style={{ fontSize: "15px", fontWeight: 700, color: THEME.colors.textPrimary, marginBottom: "4px" }}>
+            All quiet for now
+          </div>
+          <div style={{ fontSize: "12px", color: THEME.colors.textSecondary, maxWidth: "260px", lineHeight: 1.5 }}>
+            No important mentions have been detected during this session yet.
           </div>
         </div>
       ) : (
@@ -130,6 +142,7 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
             return (
               <div
                 key={alt.id || idx}
+                className="aura-interactive-card"
                 onClick={() => {
                   onSelectAlert(idx);
                   onClose();
@@ -138,32 +151,46 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
                   display: "flex",
                   alignItems: "center",
                   justifyContent: "space-between",
-                  backgroundColor: THEME.colors.bgSecondary,
+                  backgroundColor: THEME.colors.surface,
                   border: `1px solid ${THEME.colors.border}`,
                   borderRadius: THEME.radius.md,
                   padding: "12px 14px",
                   cursor: "pointer",
-                  transition: "background-color 0.15s ease",
+                  boxShadow: THEME.shadows.card,
+                  transition: THEME.transitions.fast,
                 }}
               >
                 <div style={{ display: "flex", alignItems: "flex-start", gap: "10px", flex: 1, minWidth: 0, marginRight: "10px" }}>
-                  <div style={{ marginTop: "2px" }}>
-                    <WaveformSmallIcon size={14} color={THEME.colors.accentGreen} />
+                  <div
+                    style={{
+                      width: "28px",
+                      height: "28px",
+                      borderRadius: THEME.radius.sm,
+                      backgroundColor: THEME.colors.accentLavenderLight,
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      marginTop: "1px",
+                      flexShrink: 0,
+                    }}
+                  >
+                    <BellIcon size={13} color={THEME.colors.accentLavenderDark} />
                   </div>
+
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "11.5px", marginBottom: "3px" }}>
-                      <span style={{ fontWeight: 600, color: THEME.colors.textPrimary }}>{timeStr}</span>
+                    <div style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "11px", marginBottom: "3px" }}>
+                      <span style={{ fontWeight: 700, color: THEME.colors.textPrimary }}>{timeStr}</span>
                       <span style={{ color: THEME.colors.textMuted }}>·</span>
-                      <span style={{ color: THEME.colors.textSecondary }}>{alt.explanation}</span>
+                      <span style={{ color: THEME.colors.accentLavenderDark, fontWeight: 600 }}>{alt.explanation}</span>
                     </div>
                     <div
                       style={{
-                        fontSize: "12px",
-                        fontStyle: "italic",
-                        color: THEME.colors.textSecondary,
+                        fontSize: "12.5px",
+                        color: THEME.colors.textPrimary,
                         overflow: "hidden",
                         textOverflow: "ellipsis",
                         whiteSpace: "nowrap",
+                        fontWeight: 500,
                       }}
                     >
                       "{alt.transcriptExcerpt}"
@@ -180,4 +207,3 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
     </div>
   );
 };
-

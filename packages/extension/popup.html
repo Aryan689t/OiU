@@ -4,15 +4,49 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>OiU Assistant</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@500;600;700;800&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     <style>
+      :root {
+        --aura-bg: #FAF9F6;
+        --aura-plum: #48304D;
+        --aura-lavender: #BDA7E8;
+        --aura-peach: #FFD5C2;
+        --aura-border: #E8E3ED;
+      }
+      * {
+        box-sizing: border-box;
+      }
       body {
         margin: 0;
-        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-        background-color: #090A0B;
-        color: #F5F5F5;
+        font-family: 'Plus Jakarta Sans', 'Manrope', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        background-color: var(--aura-bg);
+        color: var(--aura-plum);
         width: 320px;
         min-height: 240px;
         box-sizing: border-box;
+        -webkit-font-smoothing: antialiased;
+        -moz-osx-font-smoothing: grayscale;
+        overflow-x: hidden;
+      }
+      button {
+        user-select: none;
+        -webkit-tap-highlight-color: transparent;
+      }
+      button:focus-visible {
+        outline: 2px solid var(--aura-lavender);
+        outline-offset: 2px;
+      }
+      button:active {
+        transform: scale(0.985);
+      }
+      @media (prefers-reduced-motion: reduce) {
+        *, ::before, ::after {
+          animation-duration: 0.01ms !important;
+          animation-iteration-count: 1 !important;
+          transition-duration: 0.01ms !important;
+        }
       }
     </style>
   </head>
@@ -21,4 +55,3 @@
     <script type="module" src="/src/popup/main.tsx"></script>
   </body>
 </html>
-

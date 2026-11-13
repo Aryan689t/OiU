@@ -3,11 +3,7 @@ import { MeetingEvent, UserProfile } from "@oiu/shared";
 import { THEME } from "./theme";
 import {
   BellIcon,
-  LightningIcon,
-  BriefcaseIcon,
-  QuestionCircleIcon,
-  CopyIcon,
-  CheckIcon,
+  PlaySolidIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
   CloseIcon,
@@ -17,9 +13,8 @@ import {
   extractCoreCalloutOrQuestion,
 } from "../services/aiService";
 
-// Feature flag: Question answering / suggested responses deactivated to focus 100% on the alert engine
-const ENABLE_SUGGESTED_RESPONSES = false;
-
+// Suggested-response controls remain absent from this alert-focused component.
+// Keep transcript trigger highlighting from main.
 function escapeRegex(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
@@ -65,8 +60,8 @@ function renderHighlightedCallout(text: string, profile: UserProfile): React.Rea
       <mark
         key={idx}
         style={{
-          backgroundColor: THEME.colors.accentYellow,
-          color: "#000000",
+          backgroundColor: THEME.colors.accentPeachLight,
+          color: THEME.colors.textPrimary,
           padding: "0 5px",
           borderRadius: "2px",
           fontWeight: 700,
@@ -95,6 +90,7 @@ interface DetectionCardProps {
   onDismissAlert: () => void;
   onRegenerateAi: (event: MeetingEvent) => void;
   onOpenSettings: () => void;
+  onPlayChime?: () => void;
 }
 
 export const DetectionCard: React.FC<DetectionCardProps> = ({
@@ -102,103 +98,27 @@ export const DetectionCard: React.FC<DetectionCardProps> = ({
   alertsHistory,
   currentAlertIndex,
   profile,
-  suggestions,
-  isGeneratingAi,
-  geminiApiKey,
   priorContextTranscripts,
-  onCopySuggestion,
-  copiedSuggestionIdx,
   onNavigateAlert,
   onDismissAlert,
-  onRegenerateAi,
-  onOpenSettings,
+  onPlayChime,
 }) => {
-  const [showRawCaption, setShowRawCaption] = useState(false);
   const [showPriorContext, setShowPriorContext] = useState(false);
-  const [selectedToneIndex, setSelectedToneIndex] = useState<number>(0);
 
-  // If no alert at all, render clean standing-by empty card
-  if (!activeAlert && alertsHistory.length === 0) {
-    return (
-      <div
-        style={{
-          backgroundColor: THEME.colors.surface,
-          border: `1px solid #333338`,
-          borderRadius: THEME.radius.sm,
-          padding: "24px 20px",
-          display: "flex",
-          flexDirection: "column",
-          alignItems: "center",
-          justifyContent: "center",
-          textAlign: "center",
-          margin: "12px 0 18px 0",
-          boxSizing: "border-box",
-          boxShadow: "0 2px 14px rgba(0,0,0,0.4)",
-        }}
-      >
-        {/* Solid Inverted Yellow Tag */}
-        <div
-          style={{
-            display: "inline-block",
-            backgroundColor: THEME.colors.accentYellow,
-            color: "#000000",
-            padding: "3px 9px",
-            borderRadius: "2px",
-            fontFamily: THEME.typography.displayFont,
-            fontSize: "12px",
-            fontWeight: 800,
-            letterSpacing: "1px",
-            textTransform: "uppercase",
-            marginBottom: "10px",
-          }}
-        >
-          STANDBY // ACTIVE
-        </div>
-
-        <div
-          style={{
-            fontSize: "20px",
-            fontWeight: 700,
-            fontFamily: THEME.typography.displayFont,
-            color: "#FFFFFF",
-            letterSpacing: "0.8px",
-            textTransform: "uppercase",
-            marginBottom: "8px",
-          }}
-        >
-          Monitoring for callouts
-        </div>
-
-        <div
-          style={{
-            fontSize: "13.5px",
-            fontFamily: THEME.typography.monoFamily,
-            color: "#E2E2E6",
-            maxWidth: "320px",
-            lineHeight: 1.6,
-            fontWeight: 600,
-          }}
-        >
-          WATCHING FOR: <span style={{ color: THEME.colors.accentYellow, fontWeight: 800 }}>{profile.displayName?.toUpperCase() || "NAME"}</span>
-          {profile.identifiers?.length > 0 ? (
-            <span style={{ color: THEME.colors.accentYellow, fontWeight: 800 }}> · #{profile.identifiers.join(", #")}</span>
-          ) : ""}
-        </div>
-      </div>
-    );
-  }
-
-  // Active or selected alert from history
+  // Determine which alert to display: either activeAlert or explicitly selected alert from history
   const displayAlert =
-    alertsHistory.length > 0 && alertsHistory[currentAlertIndex]
+    activeAlert ||
+    (alertsHistory.length > 0 && currentAlertIndex >= 0 && currentAlertIndex < alertsHistory.length
       ? alertsHistory[currentAlertIndex]
-      : activeAlert || alertsHistory[0];
+      : null);
 
-  if (!displayAlert) return null;
+  // If no alert is active or selected, do not render a conflicting empty placeholder card
+  if (!displayAlert) {
+    return null;
+  }
 
   const {
     coreText,
-    isQuestion,
     activeFollowUp,
     relationReason,
     addressedToOther,
@@ -214,90 +134,124 @@ export const DetectionCard: React.FC<DetectionCardProps> = ({
       ? `${secondsAgo}s ago`
       : `${Math.round(secondsAgo / 60)}m ago`;
 
-  const confidenceScore = Math.round((displayAlert.confidence || 0.95) * 100);
-
-  // Alert Title based on event type
-  const getAlertTitle = () => {
+  // Alert Title based on event type with contextual precision
+  const getAlertDetails = () => {
     switch (displayAlert.type) {
       case "DIRECT_QUESTION":
-        return "Question for you!";
+        return {
+          title: "Question directed to you",
+          bg: THEME.colors.accentPeachLight,
+          border: THEME.colors.accentPeachBorder,
+          accent: THEME.colors.accentPeachDark,
+          badgeText: THEME.colors.accentPeachDark,
+        };
       case "NAME_MENTION":
-        return "You were called!";
+        return {
+          title: "Direct callout addressed to you",
+          bg: THEME.colors.accentLavenderLight,
+          border: THEME.colors.accentLavenderBorder,
+          accent: THEME.colors.accentLavenderDark,
+          badgeText: THEME.colors.accentLavenderDark,
+        };
       case "IDENTIFIER_MENTION":
-        return "Your ID was called!";
+        return {
+          title: "Your roll number was called",
+          bg: THEME.colors.accentPeachLight,
+          border: THEME.colors.accentPeachBorder,
+          accent: THEME.colors.accentPeachDark,
+          badgeText: THEME.colors.accentPeachDark,
+        };
       case "KEYWORD_MENTION":
-        return "Monitored Keyword!";
+        return {
+          title: "Monitored keyword spoken",
+          bg: THEME.colors.accentLavenderLight,
+          border: THEME.colors.accentLavenderBorder,
+          accent: THEME.colors.accentLavenderDark,
+          badgeText: THEME.colors.accentLavenderDark,
+        };
       case "ATTENDANCE_CALL":
-        return "Attendance Check!";
+        return {
+          title: "Attendance callout in progress",
+          bg: THEME.colors.accentPeachLight,
+          border: THEME.colors.accentPeachBorder,
+          accent: THEME.colors.accentCoralDark,
+          badgeText: THEME.colors.accentPeachDark,
+        };
       default:
-        return "You were called!";
+        return {
+          title: "Important mention flagged",
+          bg: THEME.colors.accentLavenderLight,
+          border: THEME.colors.accentLavenderBorder,
+          accent: THEME.colors.accentLavenderDark,
+          badgeText: THEME.colors.accentLavenderDark,
+        };
     }
   };
 
+  const alertDetails = getAlertDetails();
+
   return (
     <div
+      className="aura-card-enter"
       style={{
-        backgroundColor: THEME.colors.bgSecondary,
-        border: `1.5px solid ${THEME.colors.accentYellow}`,
+        backgroundColor: THEME.colors.surface,
+        border: `1px solid ${alertDetails.border}`,
+        borderLeft: `4px solid ${alertDetails.accent}`,
         borderRadius: THEME.radius.md,
-        padding: "16px",
-        margin: "10px 0 16px 0",
+        padding: "14px 15px",
+        margin: "8px 0 14px 0",
         position: "relative",
-        boxShadow: "0 0 20px rgba(255, 230, 0, 0.12)",
+        boxShadow: THEME.shadows.cardHover,
+        transition: THEME.transitions.normal,
       }}
     >
-      {/* Top Header Row: Inverted Yellow Badge + Metadata + Play Action */}
+      {/* Top Header Row: AURA Badge + Metadata + Play/Dismiss Actions */}
       <div
         style={{
           display: "flex",
-          alignItems: "flex-start",
+          alignItems: "center",
           justifyContent: "space-between",
-          gap: "10px",
-          marginBottom: "12px",
+          gap: "8px",
+          marginBottom: "10px",
         }}
       >
-        <div>
-          {/* Brutalist Inverted Tag with Tall Condensed Grotesque Display Font */}
+        <div style={{ display: "flex", alignItems: "center", gap: "6px", flexWrap: "wrap" }}>
           <div
             style={{
-              display: "inline-block",
-              backgroundColor: THEME.colors.accentYellow,
-              color: "#000000",
-              fontSize: "12px",
-              fontFamily: THEME.typography.displayFont,
+              display: "inline-flex",
+              alignItems: "center",
+              gap: "4px",
+              backgroundColor: alertDetails.bg,
+              border: `1px solid ${alertDetails.border}`,
+              color: alertDetails.badgeText,
+              fontSize: "11px",
               fontWeight: 700,
-              padding: "2px 8px 1px 8px",
-              borderRadius: "2px",
-              letterSpacing: "1px",
-              textTransform: "uppercase",
-              marginBottom: "6px",
-              lineHeight: 1.3,
+              padding: "2.5px 8px",
+              borderRadius: THEME.radius.pill,
             }}
           >
-            {getAlertTitle()}
+            <BellIcon size={11} color={alertDetails.badgeText} />
+            <span>{alertDetails.title}</span>
           </div>
 
           <div
             style={{
-              fontSize: "10.5px",
-              fontFamily: THEME.typography.monoFamily,
-              color: "#8E8E93",
-              letterSpacing: "0.4px",
-              textTransform: "uppercase",
-              display: "flex",
-              alignItems: "center",
-              gap: "6px",
+              fontSize: "11px",
+              color: THEME.colors.textMuted,
+              fontWeight: 500,
             }}
           >
-            <span>{relativeTime.toUpperCase()}</span>
+            {relativeTime}
             {currentAlertIndex > 0 && (
               <span
                 style={{
-                  backgroundColor: THEME.colors.surfaceHighlight,
-                  color: THEME.colors.accentYellow,
+                  marginLeft: "4px",
+                  backgroundColor: THEME.colors.bgSubtle,
+                  color: THEME.colors.textSecondary,
                   padding: "1px 5px",
                   borderRadius: THEME.radius.xs,
-                  fontWeight: 700,
+                  fontWeight: 600,
+                  fontSize: "10.5px",
                 }}
               >
                 #{currentAlertIndex + 1}
@@ -306,21 +260,46 @@ export const DetectionCard: React.FC<DetectionCardProps> = ({
           </div>
         </div>
 
-        {/* Right Dismiss Action */}
-        <div style={{ display: "flex", alignItems: "center" }}>
+        {/* Right Play & Dismiss Actions */}
+        <div style={{ display: "flex", alignItems: "center", gap: "5px" }}>
+          {onPlayChime && (
+            <button
+              type="button"
+              onClick={onPlayChime}
+              title="Replay alert chime"
+              aria-label="Replay alert chime"
+              style={{
+                width: "28px",
+                height: "28px",
+                borderRadius: THEME.radius.sm,
+                backgroundColor: THEME.colors.accentLavenderLight,
+                border: `1px solid ${THEME.colors.accentLavenderBorder}`,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                cursor: "pointer",
+                transition: THEME.transitions.fast,
+              }}
+            >
+              <PlaySolidIcon size={10} color={THEME.colors.accentLavenderDark} style={{ marginLeft: "1px" }} />
+            </button>
+          )}
           <button
+            type="button"
             onClick={onDismissAlert}
-            title="Dismiss & Silence Alert"
+            title="Dismiss Alert"
+            aria-label="Dismiss Alert"
             style={{
-              background: "none",
+              width: "28px",
+              height: "28px",
+              backgroundColor: THEME.colors.bgSubtle,
               border: `1px solid ${THEME.colors.border}`,
-              borderRadius: "3px",
-              color: THEME.colors.textSecondary,
+              borderRadius: THEME.radius.sm,
               cursor: "pointer",
-              padding: "6px",
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
+              transition: THEME.transitions.fast,
             }}
           >
             <CloseIcon size={12} color={THEME.colors.textSecondary} />
@@ -331,22 +310,20 @@ export const DetectionCard: React.FC<DetectionCardProps> = ({
       {/* Question / Callout Spotlight Box */}
       <div
         style={{
-          backgroundColor: "#161618",
-          border: "1px solid #28282D",
-          borderRadius: "4px",
-          padding: "16px 18px",
-          marginBottom: "12px",
+          backgroundColor: THEME.colors.surfaceSubtle,
+          border: `1px solid ${THEME.colors.borderSubtle}`,
+          borderRadius: THEME.radius.md,
+          padding: "12px 14px",
+          marginBottom: "10px",
           boxSizing: "border-box",
         }}
       >
         <div
           style={{
-            fontFamily: THEME.typography.serifFont,
-            fontSize: "18px",
-            fontWeight: 500,
-            color: "#FFFFFF",
-            lineHeight: 1.55,
-            letterSpacing: "-0.1px",
+            fontSize: "13.5px",
+            fontWeight: 600,
+            color: THEME.colors.textPrimary,
+            lineHeight: 1.5,
           }}
         >
           "{renderHighlightedCallout(coreText || displayAlert.transcriptExcerpt, profile)}"
@@ -357,20 +334,20 @@ export const DetectionCard: React.FC<DetectionCardProps> = ({
       {activeFollowUp && (
         <div
           style={{
-            marginBottom: "12px",
+            marginBottom: "8px",
             padding: "6px 10px",
-            backgroundColor: THEME.colors.blueMutedBg,
+            backgroundColor: THEME.colors.accentBlueLight,
             borderRadius: THEME.radius.sm,
-            border: "1px solid #1D3B5C",
+            border: `1px solid ${THEME.colors.accentBlueBorder}`,
             fontSize: "11px",
-            color: "#93C5FD",
+            color: THEME.colors.accentBlueDark,
             display: "flex",
             alignItems: "center",
             justifyContent: "space-between",
           }}
         >
           <span style={{ fontWeight: 600 }}>🔗 Follow-up: "{activeFollowUp}"</span>
-          <span style={{ fontSize: "9px", opacity: 0.85 }}>{relationReason}</span>
+          {relationReason && <span style={{ fontSize: "9.5px", opacity: 0.85 }}>{relationReason}</span>}
         </div>
       )}
 
@@ -378,261 +355,33 @@ export const DetectionCard: React.FC<DetectionCardProps> = ({
       {addressedToOther && (
         <div
           style={{
-            marginBottom: "12px",
+            marginBottom: "8px",
             padding: "6px 10px",
             backgroundColor: THEME.colors.amberMutedBg,
             borderRadius: THEME.radius.sm,
             border: `1px solid ${THEME.colors.amberBorder}`,
             fontSize: "11px",
-            color: "#FCD34D",
+            color: THEME.colors.accentAmber,
+            display: "flex",
+            alignItems: "center",
+            gap: "5px",
           }}
         >
-          ⚠️ Speaker addressed {otherTarget || "another person"}. Question may have moved on.
-        </div>
-      )}
-
-      {/* Suggested Response (Deactivated as per user request - focusing 100% on the core alert engine) */}
-      {ENABLE_SUGGESTED_RESPONSES && (
-        <div style={{ marginTop: "14px" }}>
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "space-between",
-              marginBottom: "8px",
-            }}
-          >
-            {/* Tone / Style Switcher Pills (Direct / Professional / Clarification) */}
-            <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-              {suggestions.map((sug, i) => {
-                const isSelected = selectedToneIndex === i;
-                return (
-                  <button
-                    key={i}
-                    onClick={() => setSelectedToneIndex(i)}
-                    style={{
-                      padding: "4px 9px",
-                      borderRadius: THEME.radius.xs,
-                      border: `1px solid ${isSelected ? THEME.colors.greenBorder : THEME.colors.borderSubtle}`,
-                      backgroundColor: isSelected ? THEME.colors.greenMutedBg : THEME.colors.surface,
-                      color: isSelected ? THEME.colors.accentGreen : THEME.colors.textSecondary,
-                      fontSize: "11px",
-                      fontWeight: isSelected ? 600 : 500,
-                      cursor: "pointer",
-                      display: "flex",
-                      alignItems: "center",
-                      gap: "4px",
-                      transition: "all 0.15s ease",
-                    }}
-                  >
-                    {sug.label === "Direct" && <LightningIcon size={12} color={isSelected ? THEME.colors.accentGreen : THEME.colors.textSecondary} />}
-                    {sug.label === "Professional" && <BriefcaseIcon size={12} color={isSelected ? THEME.colors.accentGreen : THEME.colors.textSecondary} />}
-                    {sug.label === "Clarification" && <QuestionCircleIcon size={12} color={isSelected ? THEME.colors.accentGreen : THEME.colors.textSecondary} />}
-                    <span>{sug.label}</span>
-                  </button>
-                );
-              })}
-            </div>
-
-            {/* Regenerate AI button */}
-            {geminiApiKey && (
-              <button
-                onClick={() => onRegenerateAi(displayAlert)}
-                disabled={isGeneratingAi}
-                style={{
-                  background: "none",
-                  border: "none",
-                  color: THEME.colors.accentGreen,
-                  fontSize: "11px",
-                  fontWeight: 600,
-                  cursor: "pointer",
-                  padding: "2px 4px",
-                  display: "flex",
-                  alignItems: "center",
-                  gap: "3px",
-                }}
-              >
-                <LightningIcon size={11} color={THEME.colors.accentGreen} />
-                <span>{isGeneratingAi ? "Generating..." : "Regenerate"}</span>
-              </button>
-            )}
-          </div>
-
-          {/* Real-time AI Generation status pill */}
-          {isGeneratingAi && (
-            <div
-              style={{
-                marginBottom: "8px",
-                padding: "4px 8px",
-                backgroundColor: THEME.colors.greenMutedBg,
-                borderRadius: THEME.radius.sm,
-                border: `1px solid ${THEME.colors.greenBorder}`,
-                fontSize: "10.5px",
-                color: THEME.colors.accentGreen,
-                display: "flex",
-                alignItems: "center",
-                gap: "6px",
-              }}
-            >
-              <span
-                style={{
-                  display: "inline-block",
-                  width: "6px",
-                  height: "6px",
-                  borderRadius: "50%",
-                  backgroundColor: THEME.colors.accentGreen,
-                  boxShadow: `0 0 6px ${THEME.colors.accentGreen}`,
-                }}
-              />
-              <span>Thinking... Querying Google Gemini AI for this new question</span>
-            </div>
-          )}
-
-          {/* The Full Answer Card - No Truncation, Generous Room to Read */}
-          {(() => {
-            const currentSug = suggestions[selectedToneIndex] || suggestions[0];
-            if (!currentSug) return null;
-            const isCopied = copiedSuggestionIdx === selectedToneIndex;
-
-            return (
-              <div
-                style={{
-                  backgroundColor: THEME.colors.surface,
-                  border: `1px solid ${THEME.colors.borderSubtle}`,
-                  borderRadius: THEME.radius.md,
-                  padding: "12px 14px",
-                }}
-              >
-                <div
-                  style={{
-                    fontSize: "13px",
-                    lineHeight: "1.55",
-                    color: THEME.colors.textPrimary,
-                    fontWeight: 400,
-                    whiteSpace: "normal",
-                    wordBreak: "break-word",
-                    marginBottom: "12px",
-                  }}
-                >
-                  "{currentSug.text}"
-                </div>
-
-                <div
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "space-between",
-                    paddingTop: "8px",
-                    borderTop: `1px solid ${THEME.colors.borderSubtle}`,
-                  }}
-                >
-                  <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-                    <span style={{ fontSize: "10.5px", color: THEME.colors.textMuted }}>
-                      {currentSug.label} response
-                    </span>
-                    {currentSug.source === "gemini" && (
-                      <span
-                        style={{
-                          fontSize: "9.5px",
-                          fontWeight: 600,
-                          color: THEME.colors.accentGreen,
-                          backgroundColor: THEME.colors.greenMutedBg,
-                          border: `1px solid ${THEME.colors.greenBorder}`,
-                          borderRadius: "3px",
-                          padding: "1px 5px",
-                        }}
-                      >
-                        ✨ Gemini AI
-                      </span>
-                    )}
-                    {currentSug.source === "wikipedia" && (
-                      <span
-                        style={{
-                          fontSize: "9.5px",
-                          fontWeight: 500,
-                          color: "#93C5FD",
-                          backgroundColor: THEME.colors.blueMutedBg,
-                          border: "1px solid #1D3B5C",
-                          borderRadius: "3px",
-                          padding: "1px 5px",
-                        }}
-                      >
-                        📖 Encyclopedia
-                      </span>
-                    )}
-                  </div>
-
-                  <button
-                    onClick={() => onCopySuggestion(currentSug.text, selectedToneIndex)}
-                    title="Copy full answer to clipboard"
-                    style={{
-                      display: "inline-flex",
-                      alignItems: "center",
-                      gap: "6px",
-                      padding: "6px 12px",
-                      backgroundColor: isCopied ? THEME.colors.greenMutedBg : THEME.colors.surfaceHighlight,
-                      border: `1px solid ${isCopied ? THEME.colors.greenBorder : THEME.colors.borderActive}`,
-                      borderRadius: THEME.radius.sm,
-                      color: isCopied ? THEME.colors.accentGreen : THEME.colors.textPrimary,
-                      fontSize: "11.5px",
-                      fontWeight: 600,
-                      cursor: "pointer",
-                      transition: "all 0.15s ease",
-                    }}
-                  >
-                    {isCopied ? (
-                      <>
-                        <CheckIcon size={13} color={THEME.colors.accentGreen} />
-                        <span>Copied!</span>
-                      </>
-                    ) : (
-                      <>
-                        <CopyIcon size={13} color={THEME.colors.textSecondary} />
-                        <span>Copy Answer</span>
-                      </>
-                    )}
-                  </button>
-                </div>
-              </div>
-            );
-          })()}
-
-          {/* Missing Gemini Key prompt */}
-          {!geminiApiKey && isQuestion && (
-            <button
-              onClick={onOpenSettings}
-              style={{
-                width: "100%",
-                marginTop: "8px",
-                padding: "7px 10px",
-                backgroundColor: THEME.colors.surface,
-                border: `1px solid ${THEME.colors.border}`,
-                borderRadius: THEME.radius.sm,
-                color: THEME.colors.textSecondary,
-                fontSize: "10.5px",
-                cursor: "pointer",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "space-between",
-              }}
-            >
-              <span>💡 Add free Gemini API Key for deep factual answers</span>
-              <span style={{ color: THEME.colors.accentGreen, fontWeight: 600 }}>Add Key →</span>
-            </button>
-          )}
+          <span>Speaker addressed {otherTarget || "another person"}. Question may have moved on.</span>
         </div>
       )}
 
       {/* Prior Speech Context Drawer ("What You Missed") */}
-      {priorContextTranscripts.length > 0 && (
-        <div style={{ marginTop: "12px", borderTop: `1px solid ${THEME.colors.borderSubtle}`, paddingTop: "8px" }}>
+      {priorContextTranscripts && priorContextTranscripts.length > 0 && (
+        <div style={{ marginTop: "8px", borderTop: `1px solid ${THEME.colors.borderSubtle}`, paddingTop: "6px" }}>
           <button
             onClick={() => setShowPriorContext(!showPriorContext)}
             style={{
               background: "none",
               border: "none",
-              color: THEME.colors.textSecondary,
+              color: THEME.colors.accentLavenderDark,
               fontSize: "11px",
+              fontWeight: 600,
               cursor: "pointer",
               padding: 0,
               display: "flex",
@@ -646,16 +395,16 @@ export const DetectionCard: React.FC<DetectionCardProps> = ({
           {showPriorContext && (
             <div
               style={{
-                marginTop: "8px",
+                marginTop: "6px",
                 padding: "8px 10px",
-                backgroundColor: THEME.colors.surface,
+                backgroundColor: THEME.colors.bgSubtle,
                 borderRadius: THEME.radius.sm,
                 border: `1px solid ${THEME.colors.borderSubtle}`,
                 fontSize: "11px",
                 color: THEME.colors.textSecondary,
                 display: "flex",
                 flexDirection: "column",
-                gap: "6px",
+                gap: "4px",
               }}
             >
               {priorContextTranscripts.map((t) => (
@@ -672,8 +421,8 @@ export const DetectionCard: React.FC<DetectionCardProps> = ({
       {alertsHistory.length > 1 && (
         <div
           style={{
-            marginTop: "12px",
-            paddingTop: "10px",
+            marginTop: "10px",
+            paddingTop: "8px",
             borderTop: `1px solid ${THEME.colors.borderSubtle}`,
             display: "flex",
             alignItems: "center",
@@ -684,23 +433,24 @@ export const DetectionCard: React.FC<DetectionCardProps> = ({
             disabled={currentAlertIndex >= alertsHistory.length - 1}
             onClick={() => onNavigateAlert(Math.min(alertsHistory.length - 1, currentAlertIndex + 1))}
             style={{
-              background: "none",
+              background: THEME.colors.bgSubtle,
               border: `1px solid ${THEME.colors.border}`,
               borderRadius: THEME.radius.xs,
               padding: "3px 8px",
-              color: currentAlertIndex >= alertsHistory.length - 1 ? THEME.colors.textMuted : THEME.colors.textSecondary,
+              color: currentAlertIndex >= alertsHistory.length - 1 ? THEME.colors.textMuted : THEME.colors.textPrimary,
               cursor: currentAlertIndex >= alertsHistory.length - 1 ? "not-allowed" : "pointer",
-              fontSize: "11px",
+              fontSize: "10.5px",
+              fontWeight: 600,
               display: "flex",
               alignItems: "center",
-              gap: "4px",
+              gap: "3px",
             }}
           >
-            <ChevronLeftIcon size={12} color="currentColor" />
+            <ChevronLeftIcon size={11} color="currentColor" />
             <span>Prev</span>
           </button>
 
-          <span style={{ fontSize: "11px", color: THEME.colors.textSecondary }}>
+          <span style={{ fontSize: "10.5px", color: THEME.colors.textSecondary, fontWeight: 500 }}>
             Alert {currentAlertIndex + 1} of {alertsHistory.length}
           </span>
 
@@ -708,24 +458,24 @@ export const DetectionCard: React.FC<DetectionCardProps> = ({
             disabled={currentAlertIndex <= 0}
             onClick={() => onNavigateAlert(Math.max(0, currentAlertIndex - 1))}
             style={{
-              background: "none",
+              background: THEME.colors.bgSubtle,
               border: `1px solid ${THEME.colors.border}`,
               borderRadius: THEME.radius.xs,
               padding: "3px 8px",
-              color: currentAlertIndex <= 0 ? THEME.colors.textMuted : THEME.colors.textSecondary,
+              color: currentAlertIndex <= 0 ? THEME.colors.textMuted : THEME.colors.textPrimary,
               cursor: currentAlertIndex <= 0 ? "not-allowed" : "pointer",
-              fontSize: "11px",
+              fontSize: "10.5px",
+              fontWeight: 600,
               display: "flex",
               alignItems: "center",
-              gap: "4px",
+              gap: "3px",
             }}
           >
             <span>Next</span>
-            <ChevronRightIcon size={12} color="currentColor" />
+            <ChevronRightIcon size={11} color="currentColor" />
           </button>
         </div>
       )}
     </div>
   );
 };
-

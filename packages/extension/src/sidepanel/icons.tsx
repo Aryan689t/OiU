@@ -7,7 +7,7 @@ export interface IconProps {
   style?: React.CSSProperties;
 }
 
-export const OiULogoMark: React.FC<IconProps> = ({ size = 20, color = "#F5F5F5", style }) => (
+export const OiULogoMark: React.FC<IconProps> = ({ size = 20, color = "#48304D", style }) => (
   <svg
     width={size}
     height={size}
@@ -16,17 +16,33 @@ export const OiULogoMark: React.FC<IconProps> = ({ size = 20, color = "#F5F5F5",
     xmlns="http://www.w3.org/2000/svg"
     style={style}
   >
-    {/* Minimal sleek curved crest / lambda arch matching visual reference */}
+    {/* AURA Organic harmonic loop / arch */}
     <path
-      d="M4 17.5C5.5 12 7.8 7 12 7C16.2 7 18.5 12 20 17.5"
+      d="M5 16.5C6.2 11 8.2 6.5 12 6.5C15.8 6.5 17.8 11 19 16.5"
       stroke={color}
       strokeWidth="2.4"
       strokeLinecap="round"
     />
+    <circle cx="12" cy="14" r="2.2" fill={color} />
   </svg>
 );
 
-export const SettingsIcon: React.FC<IconProps> = ({ size = 18, color = "#92979D", style }) => (
+export const AuraBrandSymbol: React.FC<IconProps> = ({ size = 22, color = "#BDA7E8", style }) => (
+  <svg
+    width={size}
+    height={size}
+    viewBox="0 0 24 24"
+    fill="none"
+    xmlns="http://www.w3.org/2000/svg"
+    style={style}
+  >
+    <circle cx="12" cy="12" r="9" stroke={color} strokeWidth="1.5" strokeOpacity="0.4" />
+    <circle cx="12" cy="12" r="5.5" stroke={color} strokeWidth="1.8" />
+    <circle cx="12" cy="12" r="2.5" fill={color} />
+  </svg>
+);
+
+export const SettingsIcon: React.FC<IconProps> = ({ size = 18, color = "#76617B", style }) => (
   <svg
     width={size}
     height={size}
@@ -43,7 +59,7 @@ export const SettingsIcon: React.FC<IconProps> = ({ size = 18, color = "#92979D"
   </svg>
 );
 
-export const BellIcon: React.FC<IconProps> = ({ size = 18, color = "#42E89A", style }) => (
+export const BellIcon: React.FC<IconProps> = ({ size = 18, color = "#BDA7E8", style }) => (
   <svg
     width={size}
     height={size}
@@ -60,7 +76,7 @@ export const BellIcon: React.FC<IconProps> = ({ size = 18, color = "#42E89A", st
   </svg>
 );
 
-export const PlaySolidIcon: React.FC<IconProps> = ({ size = 14, color = "#090A0B", style }) => (
+export const PlaySolidIcon: React.FC<IconProps> = ({ size = 14, color = "#48304D", style }) => (
   <svg
     width={size}
     height={size}
@@ -73,7 +89,7 @@ export const PlaySolidIcon: React.FC<IconProps> = ({ size = 14, color = "#090A0B
   </svg>
 );
 
-export const LightningIcon: React.FC<IconProps> = ({ size = 15, color = "#42E89A", style }) => (
+export const LightningIcon: React.FC<IconProps> = ({ size = 15, color = "#BDA7E8", style }) => (
   <svg
     width={size}
     height={size}
@@ -89,7 +105,7 @@ export const LightningIcon: React.FC<IconProps> = ({ size = 15, color = "#42E89A
   </svg>
 );
 
-export const BriefcaseIcon: React.FC<IconProps> = ({ size = 15, color = "#F5F5F5", style }) => (
+export const BriefcaseIcon: React.FC<IconProps> = ({ size = 15, color = "#76617B", style }) => (
   <svg
     width={size}
     height={size}
@@ -106,7 +122,7 @@ export const BriefcaseIcon: React.FC<IconProps> = ({ size = 15, color = "#F5F5F5
   </svg>
 );
 
-export const QuestionCircleIcon: React.FC<IconProps> = ({ size = 15, color = "#F5F5F5", style }) => (
+export const QuestionCircleIcon: React.FC<IconProps> = ({ size = 15, color = "#76617B", style }) => (
   <svg
     width={size}
     height={size}
@@ -124,7 +140,7 @@ export const QuestionCircleIcon: React.FC<IconProps> = ({ size = 15, color = "#F
   </svg>
 );
 
-export const CopyIcon: React.FC<IconProps> = ({ size = 15, color = "#92979D", style }) => (
+export const CopyIcon: React.FC<IconProps> = ({ size = 15, color = "#76617B", style }) => (
   <svg
     width={size}
     height={size}
@@ -141,7 +157,7 @@ export const CopyIcon: React.FC<IconProps> = ({ size = 15, color = "#92979D", st
   </svg>
 );
 
-export const CheckIcon: React.FC<IconProps> = ({ size = 15, color = "#42E89A", style }) => (
+export const CheckIcon: React.FC<IconProps> = ({ size = 15, color = "#87BBA2", style }) => (
   <svg
     width={size}
     height={size}
@@ -157,7 +173,7 @@ export const CheckIcon: React.FC<IconProps> = ({ size = 15, color = "#42E89A", s
   </svg>
 );
 
-export const WaveformSmallIcon: React.FC<IconProps> = ({ size = 16, color = "#92979D", style }) => (
+export const WaveformSmallIcon: React.FC<IconProps> = ({ size = 16, color = "#76617B", style }) => (
   <svg
     width={size}
     height={size}
@@ -176,7 +192,7 @@ export const WaveformSmallIcon: React.FC<IconProps> = ({ size = 16, color = "#92
   </svg>
 );
 
-export const ChevronRightIcon: React.FC<IconProps> = ({ size = 14, color = "#92979D", style }) => (
+export const ChevronRightIcon: React.FC<IconProps> = ({ size = 14, color = "#9C89A0", style }) => (
   <svg
     width={size}
     height={size}
@@ -192,7 +208,7 @@ export const ChevronRightIcon: React.FC<IconProps> = ({ size = 14, color = "#929
   </svg>
 );
 
-export const ChevronLeftIcon: React.FC<IconProps> = ({ size = 14, color = "#92979D", style }) => (
+export const ChevronLeftIcon: React.FC<IconProps> = ({ size = 14, color = "#9C89A0", style }) => (
   <svg
     width={size}
     height={size}
@@ -208,7 +224,7 @@ export const ChevronLeftIcon: React.FC<IconProps> = ({ size = 14, color = "#9297
   </svg>
 );
 
-export const EditPencilIcon: React.FC<IconProps> = ({ size = 13, color = "#92979D", style }) => (
+export const EditPencilIcon: React.FC<IconProps> = ({ size = 13, color = "#76617B", style }) => (
   <svg
     width={size}
     height={size}
@@ -225,7 +241,7 @@ export const EditPencilIcon: React.FC<IconProps> = ({ size = 13, color = "#92979
   </svg>
 );
 
-export const UserIcon: React.FC<IconProps> = ({ size = 13, color = "#92979D", style }) => (
+export const UserIcon: React.FC<IconProps> = ({ size = 13, color = "#76617B", style }) => (
   <svg
     width={size}
     height={size}
@@ -242,7 +258,7 @@ export const UserIcon: React.FC<IconProps> = ({ size = 13, color = "#92979D", st
   </svg>
 );
 
-export const HashIcon: React.FC<IconProps> = ({ size = 13, color = "#92979D", style }) => (
+export const HashIcon: React.FC<IconProps> = ({ size = 13, color = "#76617B", style }) => (
   <svg
     width={size}
     height={size}
@@ -261,7 +277,7 @@ export const HashIcon: React.FC<IconProps> = ({ size = 13, color = "#92979D", st
   </svg>
 );
 
-export const TagIcon: React.FC<IconProps> = ({ size = 13, color = "#92979D", style }) => (
+export const TagIcon: React.FC<IconProps> = ({ size = 13, color = "#76617B", style }) => (
   <svg
     width={size}
     height={size}
@@ -278,7 +294,7 @@ export const TagIcon: React.FC<IconProps> = ({ size = 13, color = "#92979D", sty
   </svg>
 );
 
-export const ClockIcon: React.FC<IconProps> = ({ size = 14, color = "#92979D", style }) => (
+export const ClockIcon: React.FC<IconProps> = ({ size = 14, color = "#9C89A0", style }) => (
   <svg
     width={size}
     height={size}
@@ -295,7 +311,7 @@ export const ClockIcon: React.FC<IconProps> = ({ size = 14, color = "#92979D", s
   </svg>
 );
 
-export const MicrophoneIcon: React.FC<IconProps> = ({ size = 15, color = "#F5F5F5", style }) => (
+export const MicrophoneIcon: React.FC<IconProps> = ({ size = 15, color = "#FFFFFF", style }) => (
   <svg
     width={size}
     height={size}
@@ -314,7 +330,7 @@ export const MicrophoneIcon: React.FC<IconProps> = ({ size = 15, color = "#F5F5F
   </svg>
 );
 
-export const StopSquareIcon: React.FC<IconProps> = ({ size = 13, color = "#F5F5F5", style }) => (
+export const StopSquareIcon: React.FC<IconProps> = ({ size = 13, color = "#FFFFFF", style }) => (
   <svg
     width={size}
     height={size}
@@ -323,11 +339,11 @@ export const StopSquareIcon: React.FC<IconProps> = ({ size = 13, color = "#F5F5F
     xmlns="http://www.w3.org/2000/svg"
     style={style}
   >
-    <rect x="5" y="5" width="14" height="14" rx="2" />
+    <rect x="5" y="5" width="14" height="14" rx="3" />
   </svg>
 );
 
-export const ZapIcon: React.FC<IconProps> = ({ size = 14, color = "#92979D", style }) => (
+export const ZapIcon: React.FC<IconProps> = ({ size = 14, color = "#BDA7E8", style }) => (
   <svg
     width={size}
     height={size}
@@ -343,7 +359,7 @@ export const ZapIcon: React.FC<IconProps> = ({ size = 14, color = "#92979D", sty
   </svg>
 );
 
-export const RefreshIcon: React.FC<IconProps> = ({ size = 14, color = "#92979D", style }) => (
+export const RefreshIcon: React.FC<IconProps> = ({ size = 14, color = "#76617B", style }) => (
   <svg
     width={size}
     height={size}
@@ -361,7 +377,7 @@ export const RefreshIcon: React.FC<IconProps> = ({ size = 14, color = "#92979D",
   </svg>
 );
 
-export const ExternalLinkIcon: React.FC<IconProps> = ({ size = 12, color = "#92979D", style }) => (
+export const ExternalLinkIcon: React.FC<IconProps> = ({ size = 12, color = "#76617B", style }) => (
   <svg
     width={size}
     height={size}
@@ -379,7 +395,7 @@ export const ExternalLinkIcon: React.FC<IconProps> = ({ size = 12, color = "#929
   </svg>
 );
 
-export const ArrowLeftIcon: React.FC<IconProps> = ({ size = 16, color = "#F5F5F5", style }) => (
+export const ArrowLeftIcon: React.FC<IconProps> = ({ size = 16, color = "#48304D", style }) => (
   <svg
     width={size}
     height={size}
@@ -396,7 +412,7 @@ export const ArrowLeftIcon: React.FC<IconProps> = ({ size = 16, color = "#F5F5F5
   </svg>
 );
 
-export const CloseIcon: React.FC<IconProps> = ({ size = 14, color = "#92979D", style }) => (
+export const CloseIcon: React.FC<IconProps> = ({ size = 14, color = "#76617B", style }) => (
   <svg
     width={size}
     height={size}
@@ -413,7 +429,7 @@ export const CloseIcon: React.FC<IconProps> = ({ size = 14, color = "#92979D", s
   </svg>
 );
 
-export const MessageSquareIcon: React.FC<IconProps> = ({ size = 15, color = "#92979D", style }) => (
+export const MessageSquareIcon: React.FC<IconProps> = ({ size = 15, color = "#76617B", style }) => (
   <svg
     width={size}
     height={size}
@@ -429,3 +445,19 @@ export const MessageSquareIcon: React.FC<IconProps> = ({ size = 15, color = "#92
   </svg>
 );
 
+export const SparklesIcon: React.FC<IconProps> = ({ size = 15, color = "#BDA7E8", style }) => (
+  <svg
+    width={size}
+    height={size}
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke={color}
+    strokeWidth="1.8"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    style={style}
+  >
+    <path d="M12 2l2.4 5.6L20 10l-5.6 2.4L12 18l-2.4-5.6L4 10l5.6-2.4L12 2z" />
+    <path d="M19 16l1.2 2.8L23 20l-2.8 1.2L19 24l-1.2-2.8L15 20l2.8-1.2L19 16z" />
+  </svg>
+);

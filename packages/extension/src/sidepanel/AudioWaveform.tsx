@@ -1,6 +1,6 @@
 import React from "react";
 import { THEME } from "./theme";
-import { WaveformSmallIcon, ClockIcon } from "./icons";
+import { WaveformSmallIcon } from "./icons";
 
 interface AudioWaveformProps {
   isListening: boolean;
@@ -8,12 +8,13 @@ interface AudioWaveformProps {
   audioLevel: number;
   segmentsCount: number;
   currentTimeString: string;
+  statusText?: string;
 }
 
-// 22 balanced vertical tick lines for the brutalist audio meter
+// 24 balanced vertical bars for the soft AURA visualizer
 const BAR_PROFILES = [
-  0.2, 0.35, 0.5, 0.4, 0.65, 0.85, 0.95, 0.7, 0.6, 0.8, 1.0, 0.75, 0.9,
-  0.85, 0.7, 0.95, 0.8, 0.6, 0.7, 0.5, 0.35, 0.2
+  0.22, 0.35, 0.5, 0.45, 0.7, 0.85, 0.95, 0.8, 0.65, 0.85, 1.0, 0.9, 0.95,
+  0.85, 0.7, 0.9, 0.8, 0.6, 0.68, 0.52, 0.38, 0.28, 0.22, 0.18
 ];
 
 export const AudioWaveform: React.FC<AudioWaveformProps> = ({
@@ -22,110 +23,125 @@ export const AudioWaveform: React.FC<AudioWaveformProps> = ({
   audioLevel,
   segmentsCount,
   currentTimeString,
+  statusText,
 }) => {
+  const hasLiveAudio = isListening && audioLevel > 0.04;
+
+  const displayStatus =
+    statusText ||
+    (isListening
+      ? hasLiveAudio
+        ? "Active Speech Feed"
+        : "Listening for Speech..."
+      : "Audio Monitoring Standby");
+
   return (
     <div
       style={{
         display: "flex",
         flexDirection: "column",
         alignItems: "center",
-        padding: "10px 0 8px 0",
+        padding: "8px 12px 10px 12px",
         width: "100%",
         boxSizing: "border-box",
+        backgroundColor: THEME.colors.surface,
+        borderRadius: THEME.radius.md,
+        border: `1px solid ${THEME.colors.border}`,
+        boxShadow: THEME.shadows.card,
+        margin: "4px 0 12px 0",
       }}
     >
-      {/* Brutalist Audio Meter Container */}
+      {/* Top subtle indicators row */}
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          width: "100%",
+          marginBottom: "6px",
+          paddingBottom: "5px",
+          borderBottom: `1px solid ${THEME.colors.borderSubtle}`,
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "center", gap: "5px" }}>
+          <WaveformSmallIcon
+            size={13}
+            color={hasLiveAudio ? THEME.colors.accentSageDark : THEME.colors.accentLavenderDark}
+          />
+          <span
+            style={{
+              fontSize: "11px",
+              fontWeight: 700,
+              letterSpacing: "0.2px",
+              color: hasLiveAudio ? THEME.colors.accentSageDark : THEME.colors.textSecondary,
+              fontFamily: THEME.typography.fontFamily,
+            }}
+          >
+            {displayStatus}
+          </span>
+        </div>
+
+        <div
+          style={{
+            fontSize: "11px",
+            color: THEME.colors.textMuted,
+            fontFamily: THEME.typography.monoFamily,
+            fontWeight: 600,
+          }}
+        >
+          {currentTimeString}
+        </div>
+      </div>
+
+      {/* AURA Audio Meter Bars */}
       <div
         style={{
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
           gap: "3.5px",
-          height: "28px",
+          height: "22px",
           width: "100%",
-          padding: "0 12px",
+          padding: "0 2px",
           boxSizing: "border-box",
         }}
+        aria-label="Real-time meeting audio visualizer"
       >
         {BAR_PROFILES.map((profile, idx) => {
-          const hasLiveAudio = isListening && audioLevel > 0.05;
           let heightScale = 0.16;
 
           if (!isListening) {
             heightScale = 0.14;
           } else if (hasLiveAudio) {
-            // Genuine real-time audio reactivity across the 22 bars (no fake idle looping)
-            const waveMod = 0.75 + 0.25 * Math.abs(Math.sin(idx * 0.8 + audioLevel * 18));
-            heightScale = Math.min(1.0, Math.max(0.22, audioLevel * profile * waveMod * 3.4));
+            const waveMod = 0.75 + 0.25 * Math.abs(Math.sin(idx * 0.75 + audioLevel * 14));
+            heightScale = Math.min(1.0, Math.max(0.2, audioLevel * profile * waveMod * 3.2));
           } else {
-            // Flat resting line when meeting audio is silent
             heightScale = 0.16;
           }
 
           const barColor = !isListening
-            ? "#2E2E34"
+            ? THEME.colors.border
             : hasLiveAudio
-            ? THEME.colors.accentYellow
-            : "#3E3E46";
+            ? THEME.colors.accentSage
+            : THEME.colors.accentLavender;
+
+          const barOpacity = !isListening ? 0.65 : hasLiveAudio ? 0.95 : 0.45;
 
           return (
             <div
               key={idx}
               style={{
-                width: "3px",
-                height: "100%",
-                maxHeight: "26px",
+                width: "4px",
+                height: `${Math.round(heightScale * 18) + 3}px`,
                 backgroundColor: barColor,
-                borderRadius: "1px",
-                transformOrigin: "center",
-                transform: `scaleY(${heightScale})`,
-                transition: "transform 0.06s ease-out, background-color 0.1s ease",
+                opacity: barOpacity,
+                borderRadius: "2px",
+                transition: "height 0.08s ease-out, background-color 0.2s ease, opacity 0.2s ease",
               }}
             />
           );
         })}
       </div>
-
-      {/* Monospace Minimalist Status Ticker */}
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          gap: "10px",
-          marginTop: "10px",
-          fontSize: "11.5px",
-          fontFamily: THEME.typography.monoFamily,
-          color: "#CCCCCC",
-          fontWeight: 600,
-          letterSpacing: "0.5px",
-          textTransform: "uppercase",
-        }}
-      >
-        {/* Status Indicator */}
-        <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-          <span
-            style={{
-              width: "6px",
-              height: "6px",
-              borderRadius: "1px",
-              backgroundColor: isListening ? THEME.colors.accentYellow : THEME.colors.textMuted,
-              boxShadow: isListening && isVoiceActive ? `0 0 8px ${THEME.colors.accentYellow}` : "none",
-            }}
-          />
-          <span style={{ color: isListening ? THEME.colors.accentYellow : "#8E8E93", fontWeight: 700 }}>
-            {isListening ? (isVoiceActive ? "LISTENING" : "STANDBY") : "OFFLINE"}
-          </span>
-        </div>
-
-        {/* Turn Segments */}
-        <span style={{ color: "#55555A" }}>·</span>
-        <span style={{ color: "#E0E0E0" }}>{segmentsCount} TURNS</span>
-        <span style={{ color: "#55555A" }}>·</span>
-        {/* Live Clock */}
-        <span style={{ color: "#AAAAAA" }}>{currentTimeString}</span>
-      </div>
     </div>
   );
 };
-
