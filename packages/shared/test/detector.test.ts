@@ -74,7 +74,7 @@ test("EventDetector prioritizes specific alias 'Tathagat' over substring 'Aryan'
   const detector = new EventDetector(testProfile);
   const result = detector.processSegment(createSegment("Hello. tatha protection tathagat Arya tathagatory hai"));
   assert.equal(result.hasEvent, true);
-  assert.match(result.event!.explanation, /Tathagat/i, "Should identify Tathagat with highest specificity");
+  assert.match(result.event!.explanation || "", /Tathagat/i, "Should identify Tathagat with highest specificity");
 });
 
 test("EventDetector detects identifier / registration number mention", () => {
@@ -89,7 +89,7 @@ test("EventDetector detects question addressed to identifier", () => {
   const result = detector.processSegment(createSegment("117 what is mitochondria?"));
   assert.equal(result.hasEvent, true);
   assert.equal(result.event?.type, "DIRECT_QUESTION");
-  assert.match(result.event!.explanation, /Direct question addressed to ID/);
+  assert.match(result.event!.explanation || "", /Direct question addressed to ID/);
 });
 
 test("EventDetector detects spaced registration numbers", () => {
@@ -217,7 +217,7 @@ test("EventDetector triggers alert when user-configured keyword 'Attendance' is 
   const res1 = detector.processSegment(createSegment("Please mark your attendance now."));
   assert.equal(res1.hasEvent, true, "Should alert on keyword attendance");
   assert.equal(res1.turnAction, "NEW_ALERT");
-  assert.match(res1.event!.explanation, /Attendance/i);
+  assert.match(res1.event!.explanation || "", /Attendance/i);
 
   // 2. Keyword spoken after an ID call in the same meeting
   const t2 = Date.now();
@@ -228,7 +228,7 @@ test("EventDetector triggers alert when user-configured keyword 'Attendance' is 
   const res3 = detector.processSegment(createSegment("listening 117 attendance attendance", t2 + 1000));
   assert.equal(res3.hasEvent, true, "Should trigger alert for attendance keyword even in continuous stream");
   assert.equal(res3.turnAction, "NEW_ALERT");
-  assert.match(res3.event!.explanation, /Attendance/i);
+  assert.match(res3.event!.explanation || "", /Attendance/i);
 });
 
 test("EventDetector catches slight spelling mistakes in user keywords and arbitrary names without hardcoding", () => {

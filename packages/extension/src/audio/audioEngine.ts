@@ -97,6 +97,11 @@ export class PureAudioEngine {
   private options: AudioEngineOptions | null = null;
   private groqApiKey = "";
 
+  // Microphone and mute-state tracking
+  private localMicStream: MediaStream | null = null;
+  private localMicSource: MediaStreamAudioSourceNode | null = null;
+  private localMicGain: GainNode | null = null;
+
   // Voice Activity Detection (VAD) state
   private isSpeaking = false;
   private speechStartTime = 0;
@@ -141,6 +146,26 @@ export class PureAudioEngine {
   }
 
   /**
+   * Helper to check if the user's mic in Google Meet is currently MUTED
+   */
+  private isMeetMicMuted(): boolean {
+    try {
+      const micBtn = document.querySelector<HTMLElement>(
+        'button[data-is-muted], button[aria-label*="turn off microphone" i], button[aria-label*="turn on microphone" i], button[data-tooltip*="turn off microphone" i], button[data-tooltip*="turn on microphone" i], button[aria-label*="mic" i]'
+      );
+      if (!micBtn) return false;
+      const dataMuted = micBtn.getAttribute("data-is-muted");
+      if (dataMuted === "true") return true;
+      if (dataMuted === "false") return false;
+      const label = (micBtn.getAttribute("aria-label") || micBtn.getAttribute("data-tooltip") || "").toLowerCase();
+      if (label.includes("turn on") || label.includes("unmute")) return true;
+      return false;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
    * Starts capturing meeting audio (tab WebRTC streams + microphone) and pipes to Groq Whisper
    */
   public async start(options: AudioEngineOptions): Promise<boolean> {
@@ -167,10 +192,26 @@ export class PureAudioEngine {
 
       this.mixedStreamDestination = this.audioContext.createMediaStreamDestination();
 
-      // 1. Hook ONLY into meeting's remote participant <audio> streams (never bypass Meet's mic mute button)
+      // 1. Hook into meeting's remote participant <audio> streams
       this.hookMeetingRemoteAudio();
 
-      // 2. Scan periodically for newly connected participant audio streams
+      // 2. Hook into local microphone with mute-awareness
+      try {
+        if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+          const micStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+          this.localMicStream = micStream;
+          this.localMicGain = this.audioContext.createGain();
+          this.localMicSource = this.audioContext.createMediaStreamSource(micStream);
+          this.localMicSource.connect(this.localMicGain);
+          this.localMicGain.connect(this.analyser);
+          this.localMicGain.connect(this.mixedStreamDestination);
+          console.log("[OiU Audio Engine] Local microphone hooked with Google Meet mute-awareness.");
+        }
+      } catch (micErr) {
+        console.log("[OiU Audio Engine] Local microphone note:", micErr);
+      }
+
+      // 3. Scan periodically for newly connected participant audio streams
       this.remoteScanInterval = setInterval(() => {
         if (this.active) this.hookMeetingRemoteAudio();
       }, 2000);
@@ -178,8 +219,13 @@ export class PureAudioEngine {
       this.active = true;
       this.startVolumeMonitoringAndVAD();
 
-      this.options?.onStatusChange?.("listening", "Listening to remote meeting audio");
-      console.log("[OiU Audio Engine] Remote meeting audio monitor initialized (mic privacy preserved).");
+      // If user has no Groq key entered yet, spin up browser Web Speech API as instant backup
+      if (!this.groqApiKey) {
+        this.startBrowserSpeechFallback();
+      }
+
+      this.options?.onStatusChange?.("listening", "Listening to live meeting voice & audio");
+      console.log("[OiU Audio Engine] Pure Audio Mode initialized successfully.");
       return true;
     } catch (err: any) {
       console.error("[OiU Audio Engine] Failed to start pure audio engine:", err);
@@ -247,6 +293,17 @@ export class PureAudioEngine {
 
     const checkVolume = () => {
       if (!this.active || !this.analyser) return;
+
+      // Sync local mic gain with Meet's mute button so muted mic doesn't feed audio or room noise
+      const isMuted = this.isMeetMicMuted();
+      if (this.localMicGain) {
+        this.localMicGain.gain.value = isMuted ? 0 : 1;
+      }
+      if (this.localMicStream) {
+        this.localMicStream.getAudioTracks().forEach((track) => {
+          track.enabled = !isMuted;
+        });
+      }
 
       this.analyser.getByteFrequencyData(buffer);
       let sum = 0;
@@ -489,6 +546,27 @@ export class PureAudioEngine {
         this.browserSpeechRecognizer.stop();
       } catch {}
       this.browserSpeechRecognizer = null;
+    }
+
+    if (this.localMicStream) {
+      try {
+        this.localMicStream.getTracks().forEach((t) => t.stop());
+      } catch {}
+      this.localMicStream = null;
+    }
+
+    if (this.localMicSource) {
+      try {
+        this.localMicSource.disconnect();
+      } catch {}
+      this.localMicSource = null;
+    }
+
+    if (this.localMicGain) {
+      try {
+        this.localMicGain.disconnect();
+      } catch {}
+      this.localMicGain = null;
     }
 
     if (this.audioContext) {

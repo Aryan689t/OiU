@@ -494,6 +494,8 @@ chrome.runtime.onMessage.addListener((message: any, _sender, sendResponse) => {
     }
 
     case "AUDIO_LEVEL": {
+      // Forward real-time audio volume pulse to sidepanel visualizer
+      chrome.runtime.sendMessage(message).catch(() => {});
       sendResponse({ acknowledged: true });
       return false;
     }

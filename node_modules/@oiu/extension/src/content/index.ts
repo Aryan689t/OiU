@@ -1,5 +1,4 @@
 import { TranscriptSegment } from "@oiu/shared";
-import { pureAudioEngine, GROQ_API_KEY_STORAGE, LISTENING_MODE_STORAGE } from "../audio/audioEngine";
 import { triggerYellowScreenFlash, clearYellowScreenFlash } from "../utils/screenFlash";
 
 console.log("[OiU Content Script] Loaded in Zero-Impact mode.");
@@ -162,238 +161,156 @@ function kickstartMeetCaptions() {
   }
 }
 
-function injectMainWorldVoiceEngine() {
-  const existing = document.getElementById("oiu-voice-engine-script");
-  if (existing) {
-    try { existing.remove(); } catch(e) {}
-  }
-  window.postMessage({ source: "OIU_CONTENT", action: "STOP" }, "*");
+let liveAudioCtx: AudioContext | null = null;
+let liveAudioAnalyser: AnalyserNode | null = null;
+let liveMicStream: MediaStream | null = null;
+let liveMicGain: GainNode | null = null;
+let liveMeterAnimId: number | null = null;
 
-  const script = document.createElement("script");
-  script.id = "oiu-voice-engine-script";
-  script.textContent = `
-    (function() {
-      if (window.__oiuVoiceEngineCleanup) {
-        try { window.__oiuVoiceEngineCleanup(); } catch(e) {}
-      }
-      window.__oiuVoiceEngineActive = true;
-      console.log("[OiU Main World] Voice & Audio Engine injected successfully.");
-
-      // 1. Direct Web Speech API listening in Meet's origin
-      const SpeechRec = window.webkitSpeechRecognition || window.SpeechRecognition;
-      let recognizer = null;
-
-      function startRecognizer() {
-        if (!window.__oiuVoiceEngineActive || !SpeechRec) return;
-        try {
-          if (recognizer) {
-            try { recognizer.stop(); } catch(e) {}
-          }
-          recognizer = new SpeechRec();
-          recognizer.continuous = true;
-          recognizer.interimResults = true;
-          recognizer.lang = "en-IN"; // English (India) & global
-
-          recognizer.onresult = function(event) {
-            let finalTranscript = "";
-            let interimTranscript = "";
-            for (let i = event.resultIndex; i < event.results.length; ++i) {
-              if (event.results[i].isFinal) {
-                finalTranscript += event.results[i][0].transcript;
-              } else {
-                interimTranscript += event.results[i][0].transcript;
-              }
-            }
-            if (finalTranscript.trim().length > 1) {
-              window.postMessage({
-                source: "OIU_MAIN_VOICE",
-                type: "VOICE_TRANSCRIPT",
-                text: finalTranscript.trim()
-              }, "*");
-            } else if (interimTranscript.trim().split(/\\s+/).length >= 4) {
-              window.postMessage({
-                source: "OIU_MAIN_VOICE",
-                type: "VOICE_TRANSCRIPT",
-                text: interimTranscript.trim()
-              }, "*");
-            }
-          };
-
-          recognizer.onerror = function(e) {
-            if (e.error !== "no-speech" && e.error !== "aborted") {
-              console.log("[OiU Main World] Speech note:", e.error);
-            }
-          };
-
-          recognizer.onend = function() {
-            if (window.__oiuVoiceEngineActive) {
-              setTimeout(function() {
-                if (window.__oiuVoiceEngineActive) {
-                  try { recognizer.start(); } catch(e) {}
-                }
-              }, 400);
-            }
-          };
-
-          recognizer.start();
-          console.log("[OiU Main World] Web Speech recognizer running in Meet origin.");
-        } catch(err) {
-          console.log("[OiU Main World] Recognizer init error:", err);
-        }
-      }
-
-      startRecognizer();
-
-      // 2. Real-time Audio Level Meter (measures live mic volume + remote audio streams)
-      let audioCtx = null;
-      let analyser = null;
-      let animFrameId = null;
-      const hookedStreams = new WeakSet();
-
-      function hookRemoteMeetingAudio() {
-        if (!audioCtx || !analyser) return;
-        try {
-          const audioElements = document.querySelectorAll("audio");
-          audioElements.forEach(function(el) {
-            if (el.srcObject && !hookedStreams.has(el.srcObject)) {
-              hookedStreams.add(el.srcObject);
-              try {
-                const remoteSource = audioCtx.createMediaStreamSource(el.srcObject);
-                remoteSource.connect(analyser);
-                console.log("[OiU Main World] Connected remote audio stream to volume analyser.");
-              } catch(e) {}
-            }
-          });
-        } catch(e) {}
-      }
-
-      function startAudioMeter() {
-        if (!window.__oiuVoiceEngineActive) return;
-        try {
-          const AudioCtx = window.AudioContext || window.webkitAudioContext;
-          if (AudioCtx) {
-            audioCtx = new AudioCtx();
-            analyser = audioCtx.createAnalyser();
-            analyser.fftSize = 64;
-            analyser.smoothingTimeConstant = 0.3;
-          }
-
-          if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-            navigator.mediaDevices.getUserMedia({ audio: true }).then(function(stream) {
-              if (audioCtx && analyser) {
-                const source = audioCtx.createMediaStreamSource(stream);
-                source.connect(analyser);
-              }
-            }).catch(function(err) {
-              console.log("[OiU Main World] Local mic stream note:", err);
-            });
-          }
-
-          if (!analyser) return;
-
-          const buffer = new Uint8Array(analyser.frequencyBinCount);
-          let lastEmittedLevel = 0;
-          let lastEmitTime = 0;
-          let lastRemoteScan = 0;
-
-          function pollVolume() {
-            if (!window.__oiuVoiceEngineActive) return;
-            const now = Date.now();
-
-            // Periodically attach newly joined remote participant audio streams
-            if (now - lastRemoteScan > 1500) {
-              lastRemoteScan = now;
-              hookRemoteMeetingAudio();
-            }
-
-            analyser.getByteFrequencyData(buffer);
-            let sum = 0;
-            for (let i = 0; i < buffer.length; i++) {
-              sum += buffer[i];
-            }
-            const avg = sum / buffer.length;
-            const level = Math.min(1.0, Math.round((avg / 128) * 100) / 100);
-
-            if (Math.abs(level - lastEmittedLevel) > 0.04 || (level > 0.05 && now - lastEmitTime > 120)) {
-              lastEmittedLevel = level;
-              lastEmitTime = now;
-              window.postMessage({
-                source: "OIU_MAIN_VOICE",
-                type: "AUDIO_LEVEL",
-                level: level
-              }, "*");
-            }
-            animFrameId = requestAnimationFrame(pollVolume);
-          }
-          pollVolume();
-        } catch(err) {
-          console.log("[OiU Main World] Audio meter error:", err);
-        }
-      }
-
-      startAudioMeter();
-
-      // 3. Cleanup & Stop handler
-      window.__oiuVoiceEngineCleanup = function() {
-        window.__oiuVoiceEngineActive = false;
-        if (recognizer) {
-          try { recognizer.stop(); } catch(err) {}
-          recognizer = null;
-        }
-        if (audioCtx) {
-          try { audioCtx.close(); } catch(err) {}
-          audioCtx = null;
-        }
-        if (animFrameId) {
-          cancelAnimationFrame(animFrameId);
-          animFrameId = null;
-        }
-      };
-
-      window.addEventListener("message", function(e) {
-        if (e.data && e.data.source === "OIU_CONTENT" && e.data.action === "STOP") {
-          if (window.__oiuVoiceEngineCleanup) {
-            window.__oiuVoiceEngineCleanup();
-          }
-        }
-      });
-    })();
-  `;
-  (document.head || document.documentElement).appendChild(script);
+function isMeetMicMuted(): boolean {
+  try {
+    const micBtn = document.querySelector(
+      'button[data-is-muted], div[data-is-muted], button[aria-label*="microphone" i], [role="button"][aria-label*="microphone" i]'
+    );
+    if (!micBtn) return false;
+    const isMutedAttr = micBtn.getAttribute("data-is-muted");
+    if (isMutedAttr === "true") return true;
+    if (isMutedAttr === "false") return false;
+    const label = (micBtn.getAttribute("aria-label") || "").toLowerCase();
+    if (label.includes("turn on microphone") || label.includes("microphone is off")) return true;
+    if (label.includes("turn off microphone") || label.includes("microphone is on")) return false;
+  } catch {}
+  return false;
 }
 
-function stopMainWorldVoiceEngine() {
-  window.postMessage({ source: "OIU_CONTENT", action: "STOP" }, "*");
-  const existing = document.getElementById("oiu-voice-engine-script");
-  if (existing) {
-    try { existing.remove(); } catch(e) {}
-  }
-}
+function startLiveAudioMeter() {
+  stopLiveAudioMeter();
 
-// Forward messages from injected Main World voice engine
-const mainWorldMessageListener = (event: MessageEvent) => {
-  if (event.data?.source !== "OIU_MAIN_VOICE") return;
+  try {
+    const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+    if (!AudioCtx) return;
 
-  if (event.data.type === "VOICE_TRANSCRIPT" && event.data.text) {
-    console.log(`[OiU Live Voice Heard]: "${event.data.text}"`);
-    processCaptionText(event.data.text, "Live Voice");
-  }
-
-  if (event.data.type === "AUDIO_LEVEL" && typeof event.data.level === "number") {
-    if (event.data.level > 0.04) {
-      lastAudioActivityTime = Date.now();
+    liveAudioCtx = new AudioCtx();
+    if (liveAudioCtx.state === "suspended") {
+      liveAudioCtx.resume().catch(() => {});
     }
 
-    chrome.runtime.sendMessage({
-      type: "AUDIO_LEVEL",
-      payload: {
-        level: event.data.level,
-        packetsCaptured: 1,
-      },
-    }).catch(() => {});
+    liveAudioAnalyser = liveAudioCtx.createAnalyser();
+    liveAudioAnalyser.fftSize = 64;
+    liveAudioAnalyser.smoothingTimeConstant = 0.3;
+
+    // Connect local microphone directly inside content script (zero inline script injection, zero CSP blocks)
+    if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+      navigator.mediaDevices
+        .getUserMedia({ audio: true, video: false })
+        .then((stream) => {
+          if (!isMonitoringActive || !liveAudioCtx || !liveAudioAnalyser) {
+            stream.getTracks().forEach((t) => t.stop());
+            return;
+          }
+          liveMicStream = stream;
+          const micSource = liveAudioCtx.createMediaStreamSource(stream);
+          liveMicGain = liveAudioCtx.createGain();
+          const muted = isMeetMicMuted();
+          liveMicGain.gain.setValueAtTime(muted ? 0 : 1, liveAudioCtx.currentTime);
+
+          micSource.connect(liveMicGain);
+          liveMicGain.connect(liveAudioAnalyser);
+          console.log(`[OiU] Microphone connected to live audio meter (Meet mute state: ${muted ? "muted" : "active"}).`);
+        })
+        .catch((err) => {
+          console.log("[OiU] Microphone stream note:", err);
+        });
+    }
+
+    const buffer = new Uint8Array(liveAudioAnalyser.frequencyBinCount);
+    let lastLevelSent = 0;
+    let lastSendTime = 0;
+
+    const poll = () => {
+      if (!isMonitoringActive || !liveAudioAnalyser || !liveAudioCtx) return;
+
+      // Update mic gain in real time based on whether user is muted in Google Meet
+      if (liveMicGain) {
+        const isMuted = isMeetMicMuted();
+        const target = isMuted ? 0 : 1;
+        if (Math.abs(liveMicGain.gain.value - target) > 0.01) {
+          liveMicGain.gain.setValueAtTime(target, liveAudioCtx.currentTime);
+        }
+      }
+
+      liveAudioAnalyser.getByteFrequencyData(buffer);
+      let sum = 0;
+      for (let i = 0; i < buffer.length; i++) {
+        sum += buffer[i];
+      }
+      const avg = sum / buffer.length;
+      let level = Math.min(1.0, Math.round((avg / 128) * 100) / 100);
+
+      // Check if remote participants are speaking via captions or DOM indicator
+      const now = Date.now();
+      const hasRecentRemoteSpeech = now - lastAudioActivityTime < 650;
+      if (level < 0.04 && hasRecentRemoteSpeech) {
+        level = 0.35;
+      }
+
+      const isVoiceNow = level > 0.04;
+      if (isVoiceNow) {
+        lastAudioActivityTime = now;
+      }
+
+      if (
+        Math.abs(level - lastLevelSent) > 0.03 ||
+        (isVoiceNow && now - lastSendTime > 90) ||
+        (!isVoiceNow && lastLevelSent > 0)
+      ) {
+        lastLevelSent = isVoiceNow ? level : 0;
+        lastSendTime = now;
+        chrome.runtime
+          .sendMessage({
+            type: "AUDIO_LEVEL",
+            payload: {
+              level: lastLevelSent,
+              packetsCaptured: 1,
+            },
+          })
+          .catch(() => {});
+      }
+
+      liveMeterAnimId = requestAnimationFrame(poll);
+    };
+
+    poll();
+  } catch (err) {
+    console.warn("[OiU] Error starting live audio meter:", err);
   }
-};
-window.addEventListener("message", mainWorldMessageListener);
+}
+
+function stopLiveAudioMeter() {
+  if (liveMeterAnimId) {
+    cancelAnimationFrame(liveMeterAnimId);
+    liveMeterAnimId = null;
+  }
+  if (liveMicStream) {
+    try {
+      liveMicStream.getTracks().forEach((t) => t.stop());
+    } catch {}
+    liveMicStream = null;
+  }
+  if (liveMicGain) {
+    try {
+      liveMicGain.disconnect();
+    } catch {}
+    liveMicGain = null;
+  }
+  if (liveAudioCtx) {
+    try {
+      liveAudioCtx.close();
+    } catch {}
+    liveAudioCtx = null;
+  }
+  liveAudioAnalyser = null;
+}
 
 function processCaptionText(rawText: string, speakerHint?: string) {
   if (!isMonitoringActive) return;
@@ -442,6 +359,16 @@ function processCaptionText(rawText: string, speakerHint?: string) {
     }
 
     console.log(`[OiU Captions Found] ${speakerName}: "${utterance}"`);
+
+    // Emit live audio level pulse to sidepanel waveform so it dances with incoming speech
+    lastAudioActivityTime = now;
+    chrome.runtime.sendMessage({
+      type: "AUDIO_LEVEL",
+      payload: {
+        level: 0.38 + Math.random() * 0.28,
+        packetsCaptured: 1,
+      },
+    }).catch(() => {});
 
     const segment: TranscriptSegment = {
       id: `seg_${now}_${Math.random().toString(36).substring(2, 6)}`,
@@ -773,39 +700,10 @@ function startMonitoring() {
   if (captionRepairIntervalId) clearInterval(captionRepairIntervalId);
   captionRepairIntervalId = setInterval(checkCaptionHealthAndWatchdog, 4000);
 
-  console.log("[OiU] Monitoring active: Native Google Meet Captions + Audio Visualizer + Stalled Caption Watchdog.");
+  // 2. Start Live Voice & Microphone Meter (runs directly in content script, zero CSP blocks)
+  startLiveAudioMeter();
 
-  // 2. ALWAYS start Audio Engine (meters volume for visualizer bars + handles Whisper / Web Speech cleanly without CSP conflicts)
-  try {
-    chrome.storage.local.get([GROQ_API_KEY_STORAGE], (result) => {
-      const groqKey = (result?.[GROQ_API_KEY_STORAGE] || "").trim();
-      pureAudioEngine.start({
-        groqApiKey: groqKey,
-        onTranscript: (segment) => {
-          processCaptionText(segment.text, segment.speakerId || "Live Meeting Audio");
-        },
-        onAudioLevel: (level) => {
-          const ts = Date.now();
-          if (level > 0.04) {
-            lastAudioActivityTime = ts;
-          }
-          if (Math.abs(level - lastAudioLevelSent) > 0.03 || (level > 0.03 && ts - lastAudioLevelTime > 120)) {
-            lastAudioLevelSent = level;
-            lastAudioLevelTime = ts;
-            chrome.runtime.sendMessage({
-              type: "AUDIO_LEVEL",
-              payload: {
-                level: level,
-                packetsCaptured: 1,
-              },
-            }).catch(() => {});
-          }
-        },
-      });
-    });
-  } catch (err) {
-    console.warn("[OiU] Audio engine start note:", err);
-  }
+  console.log("[OiU] Monitoring active: Native Google Meet Captions + Live Audio Meter + Stalled Caption Watchdog.");
 }
 
 function stopMonitoring() {
@@ -820,12 +718,7 @@ function stopMonitoring() {
     clearInterval(captionRepairIntervalId);
     captionRepairIntervalId = null;
   }
-  stopMainWorldVoiceEngine();
-  try {
-    pureAudioEngine.stop();
-  } catch (err) {
-    console.warn("[OiU] Error stopping pure audio engine:", err);
-  }
+  stopLiveAudioMeter();
   cleanOldBadge();
   recentUtteranceMap.clear();
   console.log("[OiU] Monitoring stopped.");
@@ -915,9 +808,6 @@ chrome.runtime.onMessage.addListener(messageListener);
   clearYellowScreenFlash();
   try {
     chrome.runtime.onMessage.removeListener(messageListener);
-  } catch {}
-  try {
-    window.removeEventListener("message", mainWorldMessageListener);
   } catch {}
 };
 

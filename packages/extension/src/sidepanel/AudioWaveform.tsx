@@ -23,6 +23,9 @@ export const AudioWaveform: React.FC<AudioWaveformProps> = ({
   segmentsCount,
   currentTimeString,
 }) => {
+  // Voice is observed only when actively speaking (user mic or remote speaker)
+  const hasLiveVoice = isListening && (isVoiceActive || audioLevel > 0.04);
+
   return (
     <div
       style={{
@@ -34,6 +37,14 @@ export const AudioWaveform: React.FC<AudioWaveformProps> = ({
         boxSizing: "border-box",
       }}
     >
+      <style>{`
+        @keyframes oiuWaveDancing {
+          0% { transform: scaleY(0.22); }
+          50% { transform: scaleY(0.96); }
+          100% { transform: scaleY(0.32); }
+        }
+      `}</style>
+
       {/* Brutalist Audio Meter Container */}
       <div
         style={{
@@ -48,25 +59,23 @@ export const AudioWaveform: React.FC<AudioWaveformProps> = ({
         }}
       >
         {BAR_PROFILES.map((profile, idx) => {
-          const hasLiveAudio = isListening && audioLevel > 0.05;
           let heightScale = 0.16;
 
-          if (!isListening) {
-            heightScale = 0.14;
-          } else if (hasLiveAudio) {
-            // Genuine real-time audio reactivity across the 22 bars (no fake idle looping)
-            const waveMod = 0.75 + 0.25 * Math.abs(Math.sin(idx * 0.8 + audioLevel * 18));
-            heightScale = Math.min(1.0, Math.max(0.22, audioLevel * profile * waveMod * 3.4));
+          if (hasLiveVoice) {
+            const effectiveVol = audioLevel > 0.04 ? audioLevel : 0.42;
+            const waveMod = 0.75 + 0.25 * Math.abs(Math.sin(idx * 0.8 + effectiveVol * 18));
+            heightScale = Math.min(1.0, Math.max(0.26, effectiveVol * profile * waveMod * 3.2));
           } else {
-            // Flat resting line when meeting audio is silent
+            // Mics muted or open without voice: completely flat resting line
             heightScale = 0.16;
           }
 
-          const barColor = !isListening
-            ? "#2E2E34"
-            : hasLiveAudio
+          // When voice is observed -> turns bright yellow. When quiet / muted -> dark gray
+          const barColor = hasLiveVoice
             ? THEME.colors.accentYellow
-            : "#3E3E46";
+            : isListening
+            ? "#3E3E46"
+            : "#252529";
 
           return (
             <div
@@ -79,7 +88,12 @@ export const AudioWaveform: React.FC<AudioWaveformProps> = ({
                 borderRadius: "1px",
                 transformOrigin: "center",
                 transform: `scaleY(${heightScale})`,
-                transition: "transform 0.06s ease-out, background-color 0.1s ease",
+                transition: "transform 0.07s ease-out, background-color 0.1s ease",
+                // ONLY animates when voice is actually observed! Zero motion during silence or mute!
+                animation: hasLiveVoice
+                  ? `oiuWaveDancing 0.38s ease-in-out infinite alternate ${idx * 0.032}s`
+                  : "none",
+                boxShadow: hasLiveVoice ? `0 0 6px rgba(255, 230, 0, 0.45)` : "none",
               }}
             />
           );
@@ -109,12 +123,23 @@ export const AudioWaveform: React.FC<AudioWaveformProps> = ({
               width: "6px",
               height: "6px",
               borderRadius: "1px",
-              backgroundColor: isListening ? THEME.colors.accentYellow : THEME.colors.textMuted,
-              boxShadow: isListening && isVoiceActive ? `0 0 8px ${THEME.colors.accentYellow}` : "none",
+              backgroundColor: isListening
+                ? hasLiveVoice
+                  ? THEME.colors.accentYellow
+                  : "#55555A"
+                : THEME.colors.textMuted,
+              boxShadow: isListening && hasLiveVoice ? `0 0 8px ${THEME.colors.accentYellow}` : "none",
+              transition: "background-color 0.12s ease, box-shadow 0.12s ease",
             }}
           />
-          <span style={{ color: isListening ? THEME.colors.accentYellow : "#8E8E93", fontWeight: 700 }}>
-            {isListening ? (isVoiceActive ? "LISTENING" : "STANDBY") : "OFFLINE"}
+          <span
+            style={{
+              color: isListening ? (hasLiveVoice ? THEME.colors.accentYellow : "#8E8E93") : "#66666A",
+              fontWeight: 700,
+              transition: "color 0.12s ease",
+            }}
+          >
+            {isListening ? (hasLiveVoice ? "VOICE ACTIVE" : "STANDBY") : "OFFLINE"}
           </span>
         </div>
 

@@ -162,12 +162,12 @@ export const SidepanelApp: React.FC = () => {
 
   useEffect(() => {
     const interval = setInterval(() => {
-      const isRecent = Date.now() - lastSpeechTime < 1800;
+      const isRecent = Date.now() - lastSpeechTime < 650;
       setIsVoiceActive(isRecent);
       if (!isRecent) {
-        setAudioLevel((prev) => (prev > 0 ? 0 : prev));
+        setAudioLevel(0);
       }
-    }, 200);
+    }, 100);
     return () => clearInterval(interval);
   }, [lastSpeechTime]);
 
@@ -364,7 +364,13 @@ export const SidepanelApp: React.FC = () => {
           setLastSpeechTime(Date.now());
           setIsVoiceActive(true);
         }
-        if (Array.isArray(bgTranscripts)) setTranscripts(bgTranscripts);
+        if (Array.isArray(bgTranscripts)) {
+          setTranscripts(bgTranscripts);
+          if (bgTranscripts.length > 0) {
+            setLastSpeechTime(Date.now());
+            setIsVoiceActive(true);
+          }
+        }
         if (Array.isArray(bgHistory)) setAlertsHistory(bgHistory);
         if (bgAlert) {
           setActiveAlert(bgAlert);
